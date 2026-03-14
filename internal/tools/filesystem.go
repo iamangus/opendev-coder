@@ -224,11 +224,8 @@ func GrepSearch(worktreeRoot, query, directory string, lm *locks.Manager) (strin
 				if end >= len(lines) {
 					end = len(lines) - 1
 				}
-				results.WriteString(fmt.Sprintf("%s:%d: %s\n", rel, i+1, line))
 				for ctx := start; ctx <= end; ctx++ {
-					if ctx != i {
-						results.WriteString(fmt.Sprintf("%s:%d: %s\n", rel, ctx+1, lines[ctx]))
-					}
+					results.WriteString(fmt.Sprintf("%s:%d: %s\n", rel, ctx+1, lines[ctx]))
 				}
 				results.WriteString("---\n")
 			}
