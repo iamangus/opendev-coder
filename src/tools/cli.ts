@@ -1,7 +1,9 @@
 import { spawn } from 'child_process';
 import type { WorktreeJail } from '../worktree.js';
 
-const DEFAULT_TIMEOUT = 120_000; // 120 seconds
+// 120-second ceiling is generous enough for builds/tests while still preventing runaway processes.
+// Pass a custom timeoutMs to executeTerminalCommand for shorter-lived commands.
+const DEFAULT_TIMEOUT = 120_000;
 
 export interface CommandResult {
   stdout: string;

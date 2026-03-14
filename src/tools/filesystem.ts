@@ -8,7 +8,9 @@ import type { WorktreeJail } from '../worktree.js';
 import type { FileLockManager } from '../locks.js';
 import { ToolError } from '../worktree.js';
 
-const MAX_FILE_SIZE = 1_048_576; // 1MB
+// 1MB limit guards against accidentally loading huge binaries or logs into the LLM context.
+// Override by adjusting this constant if your workload requires larger file reads.
+const MAX_FILE_SIZE = 1_048_576;
 
 const IGNORED_DIRS = new Set([
   '.git', 'node_modules', 'build', 'dist', '.next',
