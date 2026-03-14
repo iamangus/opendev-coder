@@ -19,7 +19,7 @@ const DefaultTimeout = 120 * time.Second
 func ExecuteTerminalCommand(worktreeRoot, command string, timeout time.Duration) (stdout, stderr string, exitCode int, timedOut bool, err error) {
 	info, statErr := os.Stat(worktreeRoot)
 	if statErr != nil || !info.IsDir() {
-		err = &worktree.ToolError{Message: fmt.Sprintf("Tool Error: worktree_dir %q does not exist or is not a directory", worktreeRoot)}
+		err = &worktree.ToolError{Message: fmt.Sprintf("Tool Error: worktree root %q does not exist or is not a directory", worktreeRoot)}
 		return
 	}
 
@@ -61,7 +61,7 @@ func ExecuteTerminalCommand(worktreeRoot, command string, timeout time.Duration)
 func GetGitDiff(worktreeRoot string) (string, error) {
 	info, err := os.Stat(worktreeRoot)
 	if err != nil || !info.IsDir() {
-		return "", &worktree.ToolError{Message: fmt.Sprintf("Tool Error: worktree_dir %q does not exist or is not a directory", worktreeRoot)}
+		return "", &worktree.ToolError{Message: fmt.Sprintf("Tool Error: worktree root %q does not exist or is not a directory", worktreeRoot)}
 	}
 
 	var out strings.Builder

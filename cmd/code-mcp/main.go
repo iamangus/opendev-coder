@@ -18,8 +18,20 @@ func main() {
 	var (
 		mode = flag.String("mode", "stdio", "Transport mode: stdio or http")
 		addr = flag.String("addr", ":8080", "HTTP listen address (used when mode=http)")
+		dir  = flag.String("dir", "", "Absolute path to the worktree root directory (required)")
 	)
 	flag.Parse()
+
+	if *dir == "" {
+		fmt.Fprintln(os.Stderr, "error: --dir is required")
+		flag.Usage()
+		os.Exit(1)
+	}
+	info, err := os.Stat(*dir)
+	if err != nil || !info.IsDir() {
+		fmt.Fprintf(os.Stderr, "error: --dir %q does not exist or is not a directory\n", *dir)
+		os.Exit(1)
+	}
 
 	lm := locks.NewManager()
 
@@ -29,7 +41,7 @@ func main() {
 		server.WithToolCapabilities(true),
 	)
 
-	registerTools(s, lm)
+	registerTools(s, lm, *dir)
 
 	switch *mode {
 	case "http":
@@ -47,24 +59,19 @@ func main() {
 	}
 }
 
-func registerTools(s *server.MCPServer, lm *locks.Manager) {
+func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) {
 	// read_file
 	s.AddTool(
 		mcp.NewTool("read_file",
 			mcp.WithDescription("Read the entire contents of a file within the worktree."),
-			mcp.WithString("worktree_dir", mcp.Required(), mcp.Description("Absolute path to the worktree root directory.")),
-			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path to the file, relative to worktree_dir.")),
+			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path to the file, relative to the worktree root.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			root, err := req.RequireString("worktree_dir")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			fp, err := req.RequireString("filepath")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			content, toolErr := tools.ReadFile(root, fp, lm)
+			content, toolErr := tools.ReadFile(worktreeRoot, fp, lm)
 			if toolErr != nil {
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
@@ -76,23 +83,18 @@ func registerTools(s *server.MCPServer, lm *locks.Manager) {
 	s.AddTool(
 		mcp.NewTool("read_lines",
 			mcp.WithDescription("Read a range of lines from a file within the worktree (1-indexed, inclusive)."),
-			mcp.WithString("worktree_dir", mcp.Required(), mcp.Description("Absolute path to the worktree root directory.")),
-			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path to the file, relative to worktree_dir.")),
+			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path to the file, relative to the worktree root.")),
 			mcp.WithNumber("start_line", mcp.Required(), mcp.Description("First line to read (1-indexed).")),
 			mcp.WithNumber("end_line", mcp.Required(), mcp.Description("Last line to read (1-indexed, inclusive).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			root, err := req.RequireString("worktree_dir")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			fp, err := req.RequireString("filepath")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			startLine := req.GetInt("start_line", 1)
 			endLine := req.GetInt("end_line", 1)
-			content, toolErr := tools.ReadLines(root, fp, startLine, endLine, lm)
+			content, toolErr := tools.ReadLines(worktreeRoot, fp, startLine, endLine, lm)
 			if toolErr != nil {
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
@@ -104,15 +106,10 @@ func registerTools(s *server.MCPServer, lm *locks.Manager) {
 	s.AddTool(
 		mcp.NewTool("create_file",
 			mcp.WithDescription("Create a new file with specified content within the worktree. Fails if the file already exists."),
-			mcp.WithString("worktree_dir", mcp.Required(), mcp.Description("Absolute path to the worktree root directory.")),
-			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path for the new file, relative to worktree_dir.")),
+			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path for the new file, relative to the worktree root.")),
 			mcp.WithString("content", mcp.Required(), mcp.Description("Content to write to the new file.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			root, err := req.RequireString("worktree_dir")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			fp, err := req.RequireString("filepath")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -121,7 +118,7 @@ func registerTools(s *server.MCPServer, lm *locks.Manager) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			msg, toolErr := tools.CreateFile(root, fp, content, lm)
+			msg, toolErr := tools.CreateFile(worktreeRoot, fp, content, lm)
 			if toolErr != nil {
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
@@ -133,21 +130,16 @@ func registerTools(s *server.MCPServer, lm *locks.Manager) {
 	s.AddTool(
 		mcp.NewTool("list_directory",
 			mcp.WithDescription("List the contents of a directory within the worktree."),
-			mcp.WithString("worktree_dir", mcp.Required(), mcp.Description("Absolute path to the worktree root directory.")),
-			mcp.WithString("dirpath", mcp.Required(), mcp.Description("Path to the directory to list, relative to worktree_dir.")),
+			mcp.WithString("dirpath", mcp.Required(), mcp.Description("Path to the directory to list, relative to the worktree root.")),
 			mcp.WithBoolean("recursive", mcp.Description("If true, list recursively. Default: false.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			root, err := req.RequireString("worktree_dir")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			dirPath, err := req.RequireString("dirpath")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			recursive := req.GetBool("recursive", false)
-			listing, toolErr := tools.ListDirectory(root, dirPath, recursive, lm)
+			listing, toolErr := tools.ListDirectory(worktreeRoot, dirPath, recursive, lm)
 			if toolErr != nil {
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
@@ -159,21 +151,16 @@ func registerTools(s *server.MCPServer, lm *locks.Manager) {
 	s.AddTool(
 		mcp.NewTool("grep_search",
 			mcp.WithDescription("Search for a pattern (regex or literal) within files in the worktree."),
-			mcp.WithString("worktree_dir", mcp.Required(), mcp.Description("Absolute path to the worktree root directory.")),
 			mcp.WithString("query", mcp.Required(), mcp.Description("Search pattern (regex or literal string).")),
-			mcp.WithString("directory", mcp.Description("Optional subdirectory to search within, relative to worktree_dir.")),
+			mcp.WithString("directory", mcp.Description("Optional subdirectory to search within, relative to the worktree root.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			root, err := req.RequireString("worktree_dir")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			query, err := req.RequireString("query")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			directory := req.GetString("directory", "")
-			results, toolErr := tools.GrepSearch(root, query, directory, lm)
+			results, toolErr := tools.GrepSearch(worktreeRoot, query, directory, lm)
 			if toolErr != nil {
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
@@ -185,16 +172,11 @@ func registerTools(s *server.MCPServer, lm *locks.Manager) {
 	s.AddTool(
 		mcp.NewTool("search_and_replace",
 			mcp.WithDescription("Find a block of text in a file and replace it. Uses exact match, then fuzzy match."),
-			mcp.WithString("worktree_dir", mcp.Required(), mcp.Description("Absolute path to the worktree root directory.")),
-			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path to the file, relative to worktree_dir.")),
+			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path to the file, relative to the worktree root.")),
 			mcp.WithString("search_block", mcp.Required(), mcp.Description("The exact block of text to find.")),
 			mcp.WithString("replace_block", mcp.Required(), mcp.Description("The text to replace the search_block with.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			root, err := req.RequireString("worktree_dir")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			fp, err := req.RequireString("filepath")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -207,7 +189,7 @@ func registerTools(s *server.MCPServer, lm *locks.Manager) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			result, toolErr := tools.SearchAndReplace(root, fp, searchBlock, replaceBlock, lm)
+			result, toolErr := tools.SearchAndReplace(worktreeRoot, fp, searchBlock, replaceBlock, lm)
 			if toolErr != nil {
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
@@ -219,15 +201,10 @@ func registerTools(s *server.MCPServer, lm *locks.Manager) {
 	s.AddTool(
 		mcp.NewTool("execute_terminal_command",
 			mcp.WithDescription("Execute a shell command in the worktree directory."),
-			mcp.WithString("worktree_dir", mcp.Required(), mcp.Description("Absolute path to the worktree root directory.")),
 			mcp.WithString("command", mcp.Required(), mcp.Description("Shell command to execute.")),
 			mcp.WithNumber("timeout_seconds", mcp.Description("Maximum execution time in seconds. Default: 120.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			root, err := req.RequireString("worktree_dir")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			command, err := req.RequireString("command")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -235,7 +212,7 @@ func registerTools(s *server.MCPServer, lm *locks.Manager) {
 			timeoutSecs := req.GetInt("timeout_seconds", 120)
 			timeout := time.Duration(timeoutSecs) * time.Second
 
-			stdout, stderr, exitCode, timedOut, toolErr := tools.ExecuteTerminalCommand(root, command, timeout)
+			stdout, stderr, exitCode, timedOut, toolErr := tools.ExecuteTerminalCommand(worktreeRoot, command, timeout)
 			if toolErr != nil {
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
@@ -254,14 +231,9 @@ func registerTools(s *server.MCPServer, lm *locks.Manager) {
 	s.AddTool(
 		mcp.NewTool("get_git_diff",
 			mcp.WithDescription("Get the git diff and status for the worktree."),
-			mcp.WithString("worktree_dir", mcp.Required(), mcp.Description("Absolute path to the worktree root directory.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			root, err := req.RequireString("worktree_dir")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			diff, toolErr := tools.GetGitDiff(root)
+			diff, toolErr := tools.GetGitDiff(worktreeRoot)
 			if toolErr != nil {
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}

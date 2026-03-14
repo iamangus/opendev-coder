@@ -25,7 +25,7 @@ func Resolve(worktreeRoot, relativePath string) (string, error) {
 	}
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
-		return "", &ToolError{Message: fmt.Sprintf("Tool Error: worktree_dir %q does not exist or is not a directory", worktreeRoot)}
+		return "", &ToolError{Message: fmt.Sprintf("Tool Error: worktree root %q does not exist or is not a directory", worktreeRoot)}
 	}
 	var abs string
 	if filepath.IsAbs(relativePath) {
@@ -35,7 +35,7 @@ func Resolve(worktreeRoot, relativePath string) (string, error) {
 	}
 	abs = filepath.Clean(abs)
 	if abs != root && !strings.HasPrefix(abs, root+string(filepath.Separator)) {
-		return "", &ToolError{Message: fmt.Sprintf("Tool Error: path %q escapes worktree root. All paths must be relative to worktree_dir.", relativePath)}
+		return "", &ToolError{Message: fmt.Sprintf("Tool Error: path %q escapes worktree root. All paths must be relative to the worktree root.", relativePath)}
 	}
 	return abs, nil
 }
