@@ -30,3 +30,34 @@ code-mcp --dir /path/to/worktree [--mode stdio|http] [--addr :8080]
 | `get_git_diff` | *(none)* | Show `git diff HEAD` and `git status --short` |
 
 All `filepath` and `dirpath` values are relative to the `--dir` worktree root. Path traversal outside the root is rejected.
+
+## Docker
+
+A `Dockerfile` is provided that builds the server and runs it inside a container. On startup the container clones the target repository/branch and then launches the HTTP server.
+
+### Build
+
+```sh
+docker build -t code-mcp .
+```
+
+### Run
+
+```sh
+docker run --rm -p 8080:8080 \
+  -e REPO_URL=https://github.com/owner/repo.git \
+  -e REPO_BRANCH=my-feature-branch \
+  code-mcp
+```
+
+### Environment variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `REPO_URL` | **yes** | — | Git clone URL of the repository |
+| `REPO_BRANCH` | no | *(default branch)* | Branch (or tag/SHA) to check out |
+| `GIT_TOKEN` | no | — | Personal access token injected into the HTTPS URL for private repos |
+| `MCP_MODE` | no | `http` | Transport mode: `http` or `stdio` |
+| `MCP_ADDR` | no | `:8080` | HTTP listen address (ignored when `MCP_MODE=stdio`) |
+
+> **Private repositories** — set `GIT_TOKEN` to a PAT with read access. The token is embedded in the clone URL (`https://TOKEN@host/…`) and is never written to disk or logged.

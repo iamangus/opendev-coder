@@ -1,0 +1,14 @@
+# Git history – not needed in the build context
+.git
+
+# Build artifacts
+/code-mcp
+/dist/
+
+# Secrets
+.env
+
+# Editor metadata
+.vscode/
+.idea/
+*.swp
