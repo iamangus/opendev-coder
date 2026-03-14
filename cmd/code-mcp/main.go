@@ -67,14 +67,18 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) 
 			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path to the file, relative to the worktree root.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
 			fp, err := req.RequireString("filepath")
 			if err != nil {
+				log.Printf("tool=read_file error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			content, toolErr := tools.ReadFile(worktreeRoot, fp, lm)
 			if toolErr != nil {
+				log.Printf("tool=read_file filepath=%q error=%q elapsed=%dms", fp, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
+			log.Printf("tool=read_file filepath=%q ok elapsed=%dms", fp, time.Since(start).Milliseconds())
 			return mcp.NewToolResultText(content), nil
 		},
 	)
@@ -88,16 +92,20 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) 
 			mcp.WithNumber("end_line", mcp.Required(), mcp.Description("Last line to read (1-indexed, inclusive).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
 			fp, err := req.RequireString("filepath")
 			if err != nil {
+				log.Printf("tool=read_lines error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			startLine := req.GetInt("start_line", 1)
 			endLine := req.GetInt("end_line", 1)
 			content, toolErr := tools.ReadLines(worktreeRoot, fp, startLine, endLine, lm)
 			if toolErr != nil {
+				log.Printf("tool=read_lines filepath=%q start=%d end=%d error=%q elapsed=%dms", fp, startLine, endLine, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
+			log.Printf("tool=read_lines filepath=%q start=%d end=%d ok elapsed=%dms", fp, startLine, endLine, time.Since(start).Milliseconds())
 			return mcp.NewToolResultText(content), nil
 		},
 	)
@@ -110,18 +118,23 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) 
 			mcp.WithString("content", mcp.Required(), mcp.Description("Content to write to the new file.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
 			fp, err := req.RequireString("filepath")
 			if err != nil {
+				log.Printf("tool=create_file error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			content, err := req.RequireString("content")
 			if err != nil {
+				log.Printf("tool=create_file filepath=%q error=%q elapsed=%dms", fp, err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			msg, toolErr := tools.CreateFile(worktreeRoot, fp, content, lm)
 			if toolErr != nil {
+				log.Printf("tool=create_file filepath=%q error=%q elapsed=%dms", fp, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
+			log.Printf("tool=create_file filepath=%q ok elapsed=%dms", fp, time.Since(start).Milliseconds())
 			return mcp.NewToolResultText(msg), nil
 		},
 	)
@@ -134,15 +147,19 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) 
 			mcp.WithBoolean("recursive", mcp.Description("If true, list recursively. Default: false.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
 			dirPath, err := req.RequireString("dirpath")
 			if err != nil {
+				log.Printf("tool=list_directory error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			recursive := req.GetBool("recursive", false)
 			listing, toolErr := tools.ListDirectory(worktreeRoot, dirPath, recursive, lm)
 			if toolErr != nil {
+				log.Printf("tool=list_directory dirpath=%q recursive=%t error=%q elapsed=%dms", dirPath, recursive, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
+			log.Printf("tool=list_directory dirpath=%q recursive=%t ok elapsed=%dms", dirPath, recursive, time.Since(start).Milliseconds())
 			return mcp.NewToolResultText(listing), nil
 		},
 	)
@@ -155,15 +172,19 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) 
 			mcp.WithString("directory", mcp.Description("Optional subdirectory to search within, relative to the worktree root.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
 			query, err := req.RequireString("query")
 			if err != nil {
+				log.Printf("tool=grep_search error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			directory := req.GetString("directory", "")
 			results, toolErr := tools.GrepSearch(worktreeRoot, query, directory, lm)
 			if toolErr != nil {
+				log.Printf("tool=grep_search query=%q directory=%q error=%q elapsed=%dms", query, directory, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
+			log.Printf("tool=grep_search query=%q directory=%q ok elapsed=%dms", query, directory, time.Since(start).Milliseconds())
 			return mcp.NewToolResultText(results), nil
 		},
 	)
@@ -177,22 +198,28 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) 
 			mcp.WithString("replace_block", mcp.Required(), mcp.Description("The text to replace the search_block with.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
 			fp, err := req.RequireString("filepath")
 			if err != nil {
+				log.Printf("tool=search_and_replace error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			searchBlock, err := req.RequireString("search_block")
 			if err != nil {
+				log.Printf("tool=search_and_replace filepath=%q error=%q elapsed=%dms", fp, err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			replaceBlock, err := req.RequireString("replace_block")
 			if err != nil {
+				log.Printf("tool=search_and_replace filepath=%q error=%q elapsed=%dms", fp, err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			result, toolErr := tools.SearchAndReplace(worktreeRoot, fp, searchBlock, replaceBlock, lm)
 			if toolErr != nil {
+				log.Printf("tool=search_and_replace filepath=%q error=%q elapsed=%dms", fp, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
+			log.Printf("tool=search_and_replace filepath=%q ok elapsed=%dms", fp, time.Since(start).Milliseconds())
 			return mcp.NewToolResultText(result), nil
 		},
 	)
@@ -205,8 +232,10 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) 
 			mcp.WithNumber("timeout_seconds", mcp.Description("Maximum execution time in seconds. Default: 120.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
 			command, err := req.RequireString("command")
 			if err != nil {
+				log.Printf("tool=execute_terminal_command error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			timeoutSecs := req.GetInt("timeout_seconds", 120)
@@ -214,13 +243,16 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) 
 
 			stdout, stderr, exitCode, timedOut, toolErr := tools.ExecuteTerminalCommand(worktreeRoot, command, timeout)
 			if toolErr != nil {
+				log.Printf("tool=execute_terminal_command command=%q error=%q elapsed=%dms", command, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
 
 			var result string
 			if timedOut {
+				log.Printf("tool=execute_terminal_command command=%q timed_out=true elapsed=%dms", command, time.Since(start).Milliseconds())
 				result = fmt.Sprintf("Command timed out after %d seconds.\nstdout: %s\nstderr: %s", timeoutSecs, stdout, stderr)
 			} else {
+				log.Printf("tool=execute_terminal_command command=%q exit_code=%d elapsed=%dms", command, exitCode, time.Since(start).Milliseconds())
 				result = fmt.Sprintf("Exit code: %d\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
 			}
 			return mcp.NewToolResultText(result), nil
@@ -233,10 +265,13 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) 
 			mcp.WithDescription("Get the git diff and status for the worktree."),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
 			diff, toolErr := tools.GetGitDiff(worktreeRoot)
 			if toolErr != nil {
+				log.Printf("tool=get_git_diff error=%q elapsed=%dms", toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
 			}
+			log.Printf("tool=get_git_diff ok elapsed=%dms", time.Since(start).Milliseconds())
 			return mcp.NewToolResultText(diff), nil
 		},
 	)
