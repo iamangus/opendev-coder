@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/iamangus/code-mcp/internal/config"
+	githubpkg "github.com/iamangus/code-mcp/internal/github"
 	"github.com/iamangus/code-mcp/internal/locks"
 	"github.com/iamangus/code-mcp/internal/manager"
 	"github.com/iamangus/code-mcp/internal/tools"
@@ -31,8 +32,21 @@ func main() {
 		return
 	}
 
+	// ── GitHub client (optional) ───────────────────────────────────────────
+	// If GITHUB_TOKEN and GITHUB_OWNER are both set, a GitHub client is
+	// constructed and passed to the multi-server so it can manage PRs.
+	var ghClient *githubpkg.Client
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		if owner := os.Getenv("GITHUB_OWNER"); owner != "" {
+			ghClient = githubpkg.NewClient(token, owner)
+			log.Printf("GitHub PR integration enabled (owner: %s)", owner)
+		} else {
+			log.Printf("warning: GITHUB_TOKEN set but GITHUB_OWNER is missing — PR integration disabled")
+		}
+	}
+
 	// ── Multi-server mode ──────────────────────────────────────────────────
-	runMultiServer(*addr, *reposDir)
+	runMultiServer(*addr, *reposDir, ghClient)
 }
 
 // runSingleServer starts profile-aware MCP servers for a single worktree.
@@ -77,7 +91,7 @@ func runSingleServer(mode, addr, dir string) {
 //
 // MCP endpoint layout:  http://host:port/{repo}/{branch}/{profile}/mcp
 // Management API:       http://host:port/api/repos[/...]
-func runMultiServer(addr, reposDir string) {
+func runMultiServer(addr, reposDir string, ghClient *githubpkg.Client) {
 	mgr, err := manager.New(reposDir)
 	if err != nil {
 		log.Fatalf("manager: %v", err)
@@ -157,7 +171,7 @@ func runMultiServer(addr, reposDir string) {
 
 	// API mux: /api/...
 	apiMux := http.NewServeMux()
-	registerAPIRoutes(apiMux, mgr, ts, addHandlers, removeHandlers)
+	registerAPIRoutes(apiMux, mgr, ts, ghClient, addHandlers, removeHandlers)
 
 	// Top-level handler: dispatch to API mux for /api/ paths, otherwise MCP mux.
 	top := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

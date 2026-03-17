@@ -230,6 +230,10 @@ func (m *Manager) CreateWorktree(repo, branch, base string) error {
 			if out, err := runCmd(repoDir, "git", "worktree", "add", "-b", branch, worktreeDir, startPoint); err != nil {
 				return fmt.Errorf("git worktree add: %w\n%s", err, out)
 			}
+			// Push the new branch to origin so GitHub knows about it.
+			if out, pushErr := runCmd(repoDir, "git", "push", "-u", "origin", branch); pushErr != nil {
+				log.Printf("manager: git push origin %s (non-fatal): %v\n%s", branch, pushErr, out)
+			}
 			return nil
 		}
 	}
@@ -237,6 +241,20 @@ func (m *Manager) CreateWorktree(repo, branch, base string) error {
 	// Branch exists locally or at origin — check it out into the worktree.
 	if out, err := runCmd(repoDir, "git", "worktree", "add", worktreeDir, branch); err != nil {
 		return fmt.Errorf("git worktree add: %w\n%s", err, out)
+	}
+	return nil
+}
+
+// PushBranch pushes the given branch to the origin remote.
+// It runs from the main repo directory (not a worktree). Non-fatal errors
+// (e.g. when the remote does not accept the push) are returned to the caller.
+func (m *Manager) PushBranch(repo, branch string) error {
+	repoDir := filepath.Join(m.reposDir, repo)
+	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+		return fmt.Errorf("repo %q not found", repo)
+	}
+	if out, err := runCmd(repoDir, "git", "push", "-u", "origin", branch); err != nil {
+		return fmt.Errorf("git push origin %s: %w\n%s", branch, err, out)
 	}
 	return nil
 }
@@ -270,6 +288,11 @@ func (m *Manager) MergeBranch(repo, sourceBranch, targetBranch string) error {
 		// Attempt to abort so the worktree is left in a clean state.
 		_, _ = runCmd(targetDir, "git", "merge", "--abort")
 		return &MergeConflictError{Output: out}
+	}
+	// Push the target branch so the orch branch on GitHub stays current.
+	repoDir := filepath.Join(m.reposDir, repo)
+	if out, pushErr := runCmd(repoDir, "git", "push", "-u", "origin", targetBranch); pushErr != nil {
+		log.Printf("manager: git push origin %s after merge (non-fatal): %v\n%s", targetBranch, pushErr, out)
 	}
 	return nil
 }

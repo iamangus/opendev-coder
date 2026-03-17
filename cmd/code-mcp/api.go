@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/iamangus/code-mcp/internal/config"
+	githubpkg "github.com/iamangus/code-mcp/internal/github"
 	"github.com/iamangus/code-mcp/internal/manager"
 	"github.com/iamangus/code-mcp/internal/tools"
 )
@@ -22,7 +24,11 @@ import (
 //	POST   /api/repos/{repo}/branches                        – create a worktree for a branch
 //	DELETE /api/repos/{repo}/branches/{branch}               – remove a worktree / notify of merge
 //	POST   /api/repos/{repo}/branches/{branch}/merge         – merge branch into another branch
-func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestStore, onAdded func(repo, branch, dir string), onRemoved func(repo, branch string)) {
+//	GET    /api/repos/{repo}/branches/{branch}/commits       – list commits unique to branch
+//	POST   /api/repos/{repo}/pulls                           – create a draft PR (GitHub)
+//	PATCH  /api/repos/{repo}/pulls/{number}                  – update PR body (GitHub)
+//	POST   /api/repos/{repo}/pulls/{number}/ready            – promote draft PR to ready-for-review (GitHub)
+func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestStore, ghClient *githubpkg.Client, onAdded func(repo, branch, dir string), onRemoved func(repo, branch string)) {
 	// GET /api/repos
 	mux.HandleFunc("GET /api/repos", func(w http.ResponseWriter, r *http.Request) {
 		repos, err := mgr.Scan()
@@ -225,6 +231,84 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 		}
 
 		writeJSON(w, http.StatusOK, result)
+	})
+
+	// ── GitHub PR endpoints (require ghClient; return 501 if not configured) ─
+
+	// POST /api/repos/{repo}/pulls  {"title":"...", "head":"...", "base":"...", "body":"...", "draft":true}
+	mux.HandleFunc("POST /api/repos/{repo}/pulls", func(w http.ResponseWriter, r *http.Request) {
+		repo := r.PathValue("repo")
+		if ghClient == nil {
+			apiError(w, "GitHub integration not configured (set GITHUB_TOKEN and GITHUB_OWNER)", http.StatusNotImplemented)
+			return
+		}
+		var body struct {
+			Title string `json:"title"`
+			Head  string `json:"head"`
+			Base  string `json:"base"`
+			Body  string `json:"body"`
+			Draft bool   `json:"draft"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.Title == "" || body.Head == "" || body.Base == "" {
+			apiError(w, "title, head, and base are required", http.StatusBadRequest)
+			return
+		}
+		prNumber, prURL, err := ghClient.CreatePR(r.Context(), repo, body.Title, body.Head, body.Base, body.Body, body.Draft)
+		if err != nil {
+			apiError(w, "creating PR: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"pr_number": prNumber, "pr_url": prURL})
+	})
+
+	// PATCH /api/repos/{repo}/pulls/{number}  {"body":"...", "draft":false}
+	mux.HandleFunc("PATCH /api/repos/{repo}/pulls/{number}", func(w http.ResponseWriter, r *http.Request) {
+		repo := r.PathValue("repo")
+		if ghClient == nil {
+			apiError(w, "GitHub integration not configured (set GITHUB_TOKEN and GITHUB_OWNER)", http.StatusNotImplemented)
+			return
+		}
+		prNumber, err := strconv.Atoi(r.PathValue("number"))
+		if err != nil || prNumber <= 0 {
+			apiError(w, "invalid PR number", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			Body  string `json:"body"`
+			Draft bool   `json:"draft"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := ghClient.UpdatePR(r.Context(), repo, prNumber, body.Body, body.Draft); err != nil {
+			apiError(w, "updating PR: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+
+	// POST /api/repos/{repo}/pulls/{number}/ready
+	mux.HandleFunc("POST /api/repos/{repo}/pulls/{number}/ready", func(w http.ResponseWriter, r *http.Request) {
+		repo := r.PathValue("repo")
+		if ghClient == nil {
+			apiError(w, "GitHub integration not configured (set GITHUB_TOKEN and GITHUB_OWNER)", http.StatusNotImplemented)
+			return
+		}
+		prNumber, err := strconv.Atoi(r.PathValue("number"))
+		if err != nil || prNumber <= 0 {
+			apiError(w, "invalid PR number", http.StatusBadRequest)
+			return
+		}
+		if err := ghClient.PromotePR(r.Context(), repo, prNumber); err != nil {
+			apiError(w, "promoting PR: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 }
 
