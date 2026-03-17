@@ -15,12 +15,13 @@ import (
 //
 // Routes:
 //
-//	GET    /api/repos                          – list all repos and their branches
-//	POST   /api/repos                          – clone a new repo
-//	DELETE /api/repos/{repo}                   – remove a repo and all its worktrees
-//	GET    /api/repos/{repo}/branches          – list branches for a repo
-//	POST   /api/repos/{repo}/branches          – create a worktree for a branch
-//	DELETE /api/repos/{repo}/branches/{branch} – remove a worktree / notify of merge
+//	GET    /api/repos                                        – list all repos and their branches
+//	POST   /api/repos                                        – clone a new repo
+//	DELETE /api/repos/{repo}                                 – remove a repo and all its worktrees
+//	GET    /api/repos/{repo}/branches                        – list branches for a repo
+//	POST   /api/repos/{repo}/branches                        – create a worktree for a branch
+//	DELETE /api/repos/{repo}/branches/{branch}               – remove a worktree / notify of merge
+//	POST   /api/repos/{repo}/branches/{branch}/merge         – merge branch into another branch
 func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestStore, onAdded func(repo, branch, dir string), onRemoved func(repo, branch string)) {
 	// GET /api/repos
 	mux.HandleFunc("GET /api/repos", func(w http.ResponseWriter, r *http.Request) {
@@ -102,11 +103,15 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 		apiError(w, "repo not found", http.StatusNotFound)
 	})
 
-	// POST /api/repos/{repo}/branches  {"branch":"..."}
+	// POST /api/repos/{repo}/branches  {"branch":"...", "base":"..."}
+	// base is optional; when omitted the new branch is forked from HEAD of the
+	// main clone (the default branch). base is ignored if the branch already
+	// exists locally or at origin.
 	mux.HandleFunc("POST /api/repos/{repo}/branches", func(w http.ResponseWriter, r *http.Request) {
 		repo := r.PathValue("repo")
 		var body struct {
 			Branch string `json:"branch"`
+			Base   string `json:"base"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
@@ -116,7 +121,7 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			apiError(w, "branch is required", http.StatusBadRequest)
 			return
 		}
-		if err := mgr.CreateWorktree(repo, body.Branch); err != nil {
+		if err := mgr.CreateWorktree(repo, body.Branch, body.Base); err != nil {
 			apiError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -142,6 +147,35 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 		branch := r.PathValue("branch")
 		onRemoved(repo, branch)
 		if err := mgr.RemoveWorktree(repo, branch); err != nil {
+			apiError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+
+	// POST /api/repos/{repo}/branches/{branch}/merge  {"into":"<target-branch>"}
+	// Merges the source branch (path param) into the target branch (body).
+	// Returns 200 on success, 409 on merge conflict (body contains git output),
+	// 404 if either worktree does not exist.
+	mux.HandleFunc("POST /api/repos/{repo}/branches/{branch}/merge", func(w http.ResponseWriter, r *http.Request) {
+		repo := r.PathValue("repo")
+		sourceBranch := r.PathValue("branch")
+		var body struct {
+			Into string `json:"into"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.Into == "" {
+			apiError(w, "into is required", http.StatusBadRequest)
+			return
+		}
+		if err := mgr.MergeBranch(repo, sourceBranch, body.Into); err != nil {
+			if conflictErr, ok := err.(*manager.MergeConflictError); ok {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": conflictErr.Output})
+				return
+			}
 			apiError(w, err.Error(), http.StatusNotFound)
 			return
 		}

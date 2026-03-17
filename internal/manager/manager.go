@@ -184,9 +184,13 @@ func (m *Manager) RemoveRepo(name string) error {
 }
 
 // CreateWorktree creates a git worktree at <reposDir>/<repo>-<branch> for the
-// given branch.  It fetches the remote first so that newly pushed branches are
+// given branch. It fetches the remote first so that newly pushed branches are
 // available without requiring a separate fetch step.
-func (m *Manager) CreateWorktree(repo, branch string) error {
+//
+// base specifies the commit-ish to branch from when creating a brand-new
+// branch. If base is empty, HEAD of the main clone is used. base is ignored
+// when the branch already exists locally or at origin.
+func (m *Manager) CreateWorktree(repo, branch, base string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -212,14 +216,18 @@ func (m *Manager) CreateWorktree(repo, branch string) error {
 	}
 
 	// Check whether the branch already exists (locally or as a remote-tracking ref).
-	// If it does, check it out directly; otherwise create a new branch off HEAD.
+	// If it does, check it out directly; otherwise create a new branch off base (or HEAD).
 	_, refErr := runCmd(repoDir, "git", "rev-parse", "--verify", branch)
 	if refErr != nil {
 		// Also check for a remote-tracking ref (origin/<branch>).
 		_, remoteRefErr := runCmd(repoDir, "git", "rev-parse", "--verify", "origin/"+branch)
 		if remoteRefErr != nil {
-			// Branch does not exist anywhere — create it off HEAD.
-			if out, err := runCmd(repoDir, "git", "worktree", "add", "-b", branch, worktreeDir, "HEAD"); err != nil {
+			// Branch does not exist anywhere — create it off base (fallback: HEAD).
+			startPoint := base
+			if startPoint == "" {
+				startPoint = "HEAD"
+			}
+			if out, err := runCmd(repoDir, "git", "worktree", "add", "-b", branch, worktreeDir, startPoint); err != nil {
 				return fmt.Errorf("git worktree add: %w\n%s", err, out)
 			}
 			return nil
@@ -231,6 +239,60 @@ func (m *Manager) CreateWorktree(repo, branch string) error {
 		return fmt.Errorf("git worktree add: %w\n%s", err, out)
 	}
 	return nil
+}
+
+// MergeConflictError is returned by MergeBranch when the merge cannot be
+// completed automatically due to conflicts. The output from git is captured
+// in the Output field so callers can surface it to an agent for resolution.
+type MergeConflictError struct {
+	Output string
+}
+
+func (e *MergeConflictError) Error() string {
+	return "merge conflict: " + e.Output
+}
+
+// MergeBranch merges sourceBranch into targetBranch using --no-ff inside the
+// target branch's worktree. It returns a *MergeConflictError if git exits
+// non-zero (conflict or other merge failure), so callers can distinguish
+// conflicts from other errors.
+func (m *Manager) MergeBranch(repo, sourceBranch, targetBranch string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	targetDir, err := m.worktreeDirLocked(repo, targetBranch)
+	if err != nil {
+		return fmt.Errorf("target branch %q: %w", targetBranch, err)
+	}
+
+	out, mergeErr := runCmd(targetDir, "git", "merge", "--no-ff", sourceBranch)
+	if mergeErr != nil {
+		// Attempt to abort so the worktree is left in a clean state.
+		_, _ = runCmd(targetDir, "git", "merge", "--abort")
+		return &MergeConflictError{Output: out}
+	}
+	return nil
+}
+
+// worktreeDirLocked resolves the worktree directory for repo/branch without
+// acquiring the mutex (the caller must already hold it).
+func (m *Manager) worktreeDirLocked(repo, branch string) (string, error) {
+	repoDir := filepath.Join(m.reposDir, repo)
+	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+		return "", fmt.Errorf("repo %q not found", repo)
+	}
+
+	defaultBranch, _ := getDefaultBranch(repoDir)
+	if branch == defaultBranch {
+		return repoDir, nil
+	}
+
+	wt := filepath.Join(m.reposDir, repo+"-"+branch)
+	if _, err := os.Stat(wt); err == nil {
+		return wt, nil
+	}
+
+	return "", fmt.Errorf("branch %q not found for repo %q", branch, repo)
 }
 
 // RemoveWorktree removes the worktree directory for the given branch.
