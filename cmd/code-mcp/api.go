@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/iamangus/code-mcp/internal/config"
 	"github.com/iamangus/code-mcp/internal/manager"
 	"github.com/iamangus/code-mcp/internal/tools"
 )
@@ -120,6 +121,15 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			return
 		}
 		wtDir := mgr.BranchWorktreeDir(repo, body.Branch)
+		// Fail loudly if .opendev/config.yaml is missing or invalid — the
+		// worktree was created successfully but we cannot proceed without a
+		// registered test command.
+		if _, err := config.Load(wtDir); err != nil {
+			// Remove the worktree we just created so the state stays clean.
+			_ = mgr.RemoveWorktree(repo, body.Branch)
+			apiError(w, "branch created but .opendev/config.yaml is invalid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		onAdded(repo, body.Branch, wtDir)
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"branch": manager.BranchInfo{Name: body.Branch, Dir: wtDir},

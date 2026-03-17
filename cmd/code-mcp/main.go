@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/iamangus/code-mcp/internal/config"
 	"github.com/iamangus/code-mcp/internal/locks"
 	"github.com/iamangus/code-mcp/internal/manager"
 	"github.com/iamangus/code-mcp/internal/tools"
@@ -97,6 +98,19 @@ func runMultiServer(addr, reposDir string) {
 			handlers[key] = newMCPHandler(p, dir, ts)
 			log.Printf("registered MCP handler for %s/%s/%s -> %s", repo, branch, p, dir)
 		}
+		// Auto-register the test command from .opendev/config.yaml if present.
+		// Failures are logged but not fatal here — the branch creation REST
+		// endpoint is responsible for failing loudly on missing config.
+		cfg, err := config.Load(dir)
+		if err != nil {
+			log.Printf("config: %s/%s: %v (test command not registered)", repo, branch, err)
+			return
+		}
+		if _, err := tools.RegisterTest(dir, cfg.TestCommand, "", ts); err != nil {
+			log.Printf("config: %s/%s: registering test command: %v", repo, branch, err)
+			return
+		}
+		log.Printf("config: %s/%s: registered test command: %s", repo, branch, cfg.TestCommand)
 	}
 
 	removeHandlers := func(repo, branch string) {
