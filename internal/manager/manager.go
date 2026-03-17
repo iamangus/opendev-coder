@@ -34,15 +34,20 @@ type BranchInfo struct {
 // Manager manages repositories and their worktrees under ReposDir.
 type Manager struct {
 	reposDir string
+	token    string // optional GitHub token used to authenticate all git operations
 	mu       sync.RWMutex
 }
 
 // New returns a Manager rooted at reposDir, creating the directory if needed.
-func New(reposDir string) (*Manager, error) {
+// token is an optional GitHub personal-access token. When non-empty it is
+// injected into every git command via the GIT_CONFIG_* env vars so that all
+// push/fetch/clone operations against https://github.com/ authenticate
+// automatically without prompting.
+func New(reposDir, token string) (*Manager, error) {
 	if err := os.MkdirAll(reposDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating repos dir %q: %w", reposDir, err)
 	}
-	return &Manager{reposDir: reposDir}, nil
+	return &Manager{reposDir: reposDir, token: token}, nil
 }
 
 // ReposDir returns the root directory where repositories are stored.
@@ -155,7 +160,7 @@ func (m *Manager) CloneRepo(repoURL, name, token string) error {
 		cloneURL = embedToken(repoURL, token)
 	}
 
-	if out, err := runCmd("", "git", "clone", cloneURL, destDir); err != nil {
+	if out, err := m.runCmd("", "git", "clone", cloneURL, destDir); err != nil {
 		return fmt.Errorf("git clone: %w\n%s", err, out)
 	}
 	return nil
@@ -211,27 +216,27 @@ func (m *Manager) CreateWorktree(repo, branch, base string) error {
 
 	// Fetch so that newly pushed branches are discoverable.
 	// Log but don't fail on fetch errors – the branch may still exist locally.
-	if out, fetchErr := runCmd(repoDir, "git", "fetch", "--quiet", "origin"); fetchErr != nil {
+	if out, fetchErr := m.runCmd(repoDir, "git", "fetch", "--quiet", "origin"); fetchErr != nil {
 		log.Printf("manager: git fetch in %q (non-fatal): %v\n%s", repoDir, fetchErr, out)
 	}
 
 	// Check whether the branch already exists (locally or as a remote-tracking ref).
 	// If it does, check it out directly; otherwise create a new branch off base (or HEAD).
-	_, refErr := runCmd(repoDir, "git", "rev-parse", "--verify", branch)
+	_, refErr := m.runCmd(repoDir, "git", "rev-parse", "--verify", branch)
 	if refErr != nil {
 		// Also check for a remote-tracking ref (origin/<branch>).
-		_, remoteRefErr := runCmd(repoDir, "git", "rev-parse", "--verify", "origin/"+branch)
+		_, remoteRefErr := m.runCmd(repoDir, "git", "rev-parse", "--verify", "origin/"+branch)
 		if remoteRefErr != nil {
 			// Branch does not exist anywhere — create it off base (fallback: HEAD).
 			startPoint := base
 			if startPoint == "" {
 				startPoint = "HEAD"
 			}
-			if out, err := runCmd(repoDir, "git", "worktree", "add", "-b", branch, worktreeDir, startPoint); err != nil {
+			if out, err := m.runCmd(repoDir, "git", "worktree", "add", "-b", branch, worktreeDir, startPoint); err != nil {
 				return fmt.Errorf("git worktree add: %w\n%s", err, out)
 			}
 			// Push the new branch to origin so GitHub knows about it.
-			if out, pushErr := runCmd(repoDir, "git", "push", "-u", "origin", branch); pushErr != nil {
+			if out, pushErr := m.runCmd(repoDir, "git", "push", "-u", "origin", branch); pushErr != nil {
 				log.Printf("manager: git push origin %s (non-fatal): %v\n%s", branch, pushErr, out)
 			}
 			return nil
@@ -239,7 +244,7 @@ func (m *Manager) CreateWorktree(repo, branch, base string) error {
 	}
 
 	// Branch exists locally or at origin — check it out into the worktree.
-	if out, err := runCmd(repoDir, "git", "worktree", "add", worktreeDir, branch); err != nil {
+	if out, err := m.runCmd(repoDir, "git", "worktree", "add", worktreeDir, branch); err != nil {
 		return fmt.Errorf("git worktree add: %w\n%s", err, out)
 	}
 	return nil
@@ -253,7 +258,7 @@ func (m *Manager) PushBranch(repo, branch string) error {
 	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
 		return fmt.Errorf("repo %q not found", repo)
 	}
-	if out, err := runCmd(repoDir, "git", "push", "-u", "origin", branch); err != nil {
+	if out, err := m.runCmd(repoDir, "git", "push", "-u", "origin", branch); err != nil {
 		return fmt.Errorf("git push origin %s: %w\n%s", branch, err, out)
 	}
 	return nil
@@ -283,15 +288,15 @@ func (m *Manager) MergeBranch(repo, sourceBranch, targetBranch string) error {
 		return fmt.Errorf("target branch %q: %w", targetBranch, err)
 	}
 
-	out, mergeErr := runCmd(targetDir, "git", "merge", "--no-ff", sourceBranch)
+	out, mergeErr := m.runCmd(targetDir, "git", "merge", "--no-ff", sourceBranch)
 	if mergeErr != nil {
 		// Attempt to abort so the worktree is left in a clean state.
-		_, _ = runCmd(targetDir, "git", "merge", "--abort")
+		_, _ = m.runCmd(targetDir, "git", "merge", "--abort")
 		return &MergeConflictError{Output: out}
 	}
 	// Push the target branch so the orch branch on GitHub stays current.
 	repoDir := filepath.Join(m.reposDir, repo)
-	if out, pushErr := runCmd(repoDir, "git", "push", "-u", "origin", targetBranch); pushErr != nil {
+	if out, pushErr := m.runCmd(repoDir, "git", "push", "-u", "origin", targetBranch); pushErr != nil {
 		log.Printf("manager: git push origin %s after merge (non-fatal): %v\n%s", targetBranch, pushErr, out)
 	}
 	return nil
@@ -322,7 +327,7 @@ func (m *Manager) GetCommits(repo, branch string) ([]CommitInfo, error) {
 	}
 
 	// Format: hash<TAB>subject, one per line.
-	out, err := runCmd(repoDir, "git", "log",
+	out, err := m.runCmd(repoDir, "git", "log",
 		defaultBranch+".."+branch,
 		"--pretty=format:%H\t%s",
 	)
@@ -380,7 +385,7 @@ func (m *Manager) RemoveWorktree(repo, branch string) error {
 	worktreeDir := filepath.Join(m.reposDir, repo+"-"+branch)
 
 	// Ask git to deregister the worktree before removing the directory.
-	if out, wtErr := runCmd(repoDir, "git", "worktree", "remove", "--force", worktreeDir); wtErr != nil {
+	if out, wtErr := m.runCmd(repoDir, "git", "worktree", "remove", "--force", worktreeDir); wtErr != nil {
 		log.Printf("manager: git worktree remove %q (non-fatal): %v\n%s", worktreeDir, wtErr, out)
 	}
 
@@ -393,7 +398,7 @@ func (m *Manager) RemoveWorktree(repo, branch string) error {
 // --- internal helpers -------------------------------------------------------
 
 func getDefaultBranch(repoDir string) (string, error) {
-	out, err := runCmd(repoDir, "git", "symbolic-ref", "--short", "HEAD")
+	out, err := runCmdBasic(repoDir, "git", "symbolic-ref", "--short", "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -403,7 +408,7 @@ func getDefaultBranch(repoDir string) (string, error) {
 // listWorktrees returns BranchInfo for every worktree registered with the repo,
 // including the main clone itself.
 func listWorktrees(repoDir, repoName, defaultBranch string) ([]BranchInfo, error) {
-	out, err := runCmd(repoDir, "git", "worktree", "list", "--porcelain")
+	out, err := runCmdBasic(repoDir, "git", "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
 	}
@@ -464,12 +469,44 @@ func embedToken(repoURL, token string) string {
 	return repoURL
 }
 
-func runCmd(dir, name string, args ...string) (string, error) {
+// runCmdBasic runs a git command without injecting auth credentials.
+// Use this for read-only introspection commands (symbolic-ref, worktree list)
+// that never require network access.
+func runCmdBasic(dir, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// runCmd runs a git command as a method so it can inject authentication
+// env vars from the manager's token when one is configured.
+//
+// When m.token is set, the following git config env vars are added:
+//
+//	GIT_CONFIG_COUNT=1
+//	GIT_CONFIG_KEY_0=url.https://<token>@github.com/.insteadOf
+//	GIT_CONFIG_VALUE_0=https://github.com/
+//
+// This rewrites every https://github.com/ URL to an authenticated one at the
+// process level — no ~/.gitconfig mutations, no side effects between runs.
+func (m *Manager) runCmd(dir, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if m.token != "" {
+		env = append(env,
+			"GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=url.https://"+m.token+"@github.com/.insteadOf",
+			"GIT_CONFIG_VALUE_0=https://github.com/",
+		)
+	}
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

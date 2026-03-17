@@ -139,7 +139,7 @@ func TestMultiServerRouting(t *testing.T) {
 	}
 	initGitRepo(t, repoDir)
 
-	mgr, err := manager.New(reposDir)
+	mgr, err := manager.New(reposDir, "")
 	if err != nil {
 		t.Fatalf("manager.New: %v", err)
 	}

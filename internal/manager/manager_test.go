@@ -47,7 +47,7 @@ func TestNew_CreatesMissingDir(t *testing.T) {
 	base := t.TempDir()
 	reposDir := filepath.Join(base, "repos")
 
-	mgr, err := manager.New(reposDir)
+	mgr, err := manager.New(reposDir, "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestNew_CreatesMissingDir(t *testing.T) {
 
 // TestRepoDir and TestBranchWorktreeDir verify path construction.
 func TestRepoDir(t *testing.T) {
-	mgr, _ := manager.New(t.TempDir())
+	mgr, _ := manager.New(t.TempDir(), "")
 	got := mgr.RepoDir("myrepo")
 	if !strings.HasSuffix(got, "/myrepo") {
 		t.Errorf("RepoDir = %q, want suffix /myrepo", got)
@@ -69,7 +69,7 @@ func TestRepoDir(t *testing.T) {
 }
 
 func TestBranchWorktreeDir(t *testing.T) {
-	mgr, _ := manager.New(t.TempDir())
+	mgr, _ := manager.New(t.TempDir(), "")
 	got := mgr.BranchWorktreeDir("myrepo", "feature")
 	if !strings.HasSuffix(got, "/myrepo-feature") {
 		t.Errorf("BranchWorktreeDir = %q, want suffix /myrepo-feature", got)
@@ -78,7 +78,7 @@ func TestBranchWorktreeDir(t *testing.T) {
 
 // TestScan_EmptyDir verifies Scan returns nil for an empty repos dir.
 func TestScan_EmptyDir(t *testing.T) {
-	mgr, _ := manager.New(t.TempDir())
+	mgr, _ := manager.New(t.TempDir(), "")
 	repos, err := mgr.Scan()
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -98,7 +98,7 @@ func TestScan_DiscoverMainClone(t *testing.T) {
 	}
 	initGitRepo(t, repoDir)
 
-	mgr, _ := manager.New(reposDir)
+	mgr, _ := manager.New(reposDir, "")
 	repos, err := mgr.Scan()
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -138,7 +138,7 @@ func TestScan_IgnoresWorktreeDirs(t *testing.T) {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
 	}
 
-	mgr, _ := manager.New(reposDir)
+	mgr, _ := manager.New(reposDir, "")
 	repos, err := mgr.Scan()
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -174,7 +174,7 @@ func TestRemoveRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mgr, _ := manager.New(reposDir)
+	mgr, _ := manager.New(reposDir, "")
 	if err := mgr.RemoveRepo("myrepo"); err != nil {
 		t.Fatalf("RemoveRepo: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestRemoveRepo(t *testing.T) {
 
 // TestRemoveRepo_NotFound verifies that removing a non-existent repo returns error.
 func TestRemoveRepo_NotFound(t *testing.T) {
-	mgr, _ := manager.New(t.TempDir())
+	mgr, _ := manager.New(t.TempDir(), "")
 	if err := mgr.RemoveRepo("nonexistent"); err == nil {
 		t.Error("expected error for non-existent repo")
 	}
@@ -209,7 +209,7 @@ func TestCreateAndRemoveWorktree(t *testing.T) {
 		t.Fatalf("git branch: %v\n%s", err, out)
 	}
 
-	mgr, _ := manager.New(reposDir)
+	mgr, _ := manager.New(reposDir, "")
 	if err := mgr.CreateWorktree("myrepo", "feature", ""); err != nil {
 		t.Fatalf("CreateWorktree: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestCreateWorktree_InvalidBranch(t *testing.T) {
 	}
 	initGitRepo(t, repoDir)
 
-	mgr, _ := manager.New(reposDir)
+	mgr, _ := manager.New(reposDir, "")
 	if err := mgr.CreateWorktree("myrepo", "feature/sub", ""); err == nil {
 		t.Error("expected error for branch name with slash")
 	}
@@ -265,7 +265,7 @@ func TestCreateWorktree_AlreadyExists(t *testing.T) {
 		t.Fatalf("git branch: %v\n%s", err, out)
 	}
 
-	mgr, _ := manager.New(reposDir)
+	mgr, _ := manager.New(reposDir, "")
 	if err := mgr.CreateWorktree("myrepo", "feature", ""); err != nil {
 		t.Fatalf("first CreateWorktree: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestCreateWorktree_WithBase(t *testing.T) {
 	mustRun("add", ".")
 	mustRun("commit", "-m", "orch commit")
 
-	mgr, _ := manager.New(reposDir)
+	mgr, _ := manager.New(reposDir, "")
 	if err := mgr.CreateWorktree("myrepo", "feature-child", "orch-base"); err != nil {
 		t.Fatalf("CreateWorktree with base: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestMergeBranch_Success(t *testing.T) {
 	// Go back to orch-test to set up worktrees (repo HEAD must not be on these branches).
 	mustRun("checkout", "main")
 
-	mgr, _ := manager.New(reposDir)
+	mgr, _ := manager.New(reposDir, "")
 
 	// Create worktrees for both branches.
 	if err := mgr.CreateWorktree("myrepo", "orch-test", ""); err != nil {
@@ -404,7 +404,7 @@ func TestMergeBranch_Conflict(t *testing.T) {
 
 	mustRun(repoDir, "checkout", "main")
 
-	mgr, _ := manager.New(reposDir)
+	mgr, _ := manager.New(reposDir, "")
 	if err := mgr.CreateWorktree("myrepo", "orch-conflict", ""); err != nil {
 		t.Fatalf("CreateWorktree orch-conflict: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestWorktreeDir_DefaultBranch(t *testing.T) {
 	}
 	initGitRepo(t, repoDir)
 
-	mgr, _ := manager.New(reposDir)
+	mgr, _ := manager.New(reposDir, "")
 	got, err := mgr.WorktreeDir("myrepo", "main")
 	if err != nil {
 		t.Fatalf("WorktreeDir: %v", err)

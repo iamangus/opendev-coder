@@ -35,10 +35,13 @@ func main() {
 	// ── GitHub client (optional) ───────────────────────────────────────────
 	// If GITHUB_TOKEN and GITHUB_OWNER are both set, a GitHub client is
 	// constructed and passed to the multi-server so it can manage PRs.
+	// The token is also passed to the manager so all git operations
+	// (push/fetch) authenticate automatically.
 	var ghClient *githubpkg.Client
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	if githubToken != "" {
 		if owner := os.Getenv("GITHUB_OWNER"); owner != "" {
-			ghClient = githubpkg.NewClient(token, owner)
+			ghClient = githubpkg.NewClient(githubToken, owner)
 			log.Printf("GitHub PR integration enabled (owner: %s)", owner)
 		} else {
 			log.Printf("warning: GITHUB_TOKEN set but GITHUB_OWNER is missing — PR integration disabled")
@@ -46,7 +49,7 @@ func main() {
 	}
 
 	// ── Multi-server mode ──────────────────────────────────────────────────
-	runMultiServer(*addr, *reposDir, ghClient)
+	runMultiServer(*addr, *reposDir, githubToken, ghClient)
 }
 
 // runSingleServer starts profile-aware MCP servers for a single worktree.
@@ -91,8 +94,8 @@ func runSingleServer(mode, addr, dir string) {
 //
 // MCP endpoint layout:  http://host:port/{repo}/{branch}/{profile}/mcp
 // Management API:       http://host:port/api/repos[/...]
-func runMultiServer(addr, reposDir string, ghClient *githubpkg.Client) {
-	mgr, err := manager.New(reposDir)
+func runMultiServer(addr, reposDir, githubToken string, ghClient *githubpkg.Client) {
+	mgr, err := manager.New(reposDir, githubToken)
 	if err != nil {
 		log.Fatalf("manager: %v", err)
 	}
