@@ -13,7 +13,7 @@ import (
 )
 
 // registerTools registers all MCP tools on s, scoped to worktreeRoot.
-func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) {
+func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string, ts *tools.TestStore) {
 	// read_file
 	s.AddTool(
 		mcp.NewTool("read_file",
@@ -229,13 +229,38 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) 
 			return mcp.NewToolResultText(diff), nil
 		},
 	)
+
+	// register_test
+	s.AddTool(
+		mcp.NewTool("register_test",
+			mcp.WithDescription("Register a test command to be run against this worktree. The command will be executed from the worktree root directory. Only one test can be registered at a time; calling this again overwrites the previous registration."),
+			mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to run the tests (e.g. 'go test ./...', 'npm test', 'pytest').")),
+			mcp.WithString("description", mcp.Description("Optional human-readable description of what the test verifies.")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
+			command, err := req.RequireString("command")
+			if err != nil {
+				log.Printf("tool=register_test error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			description := req.GetString("description", "")
+			msg, toolErr := tools.RegisterTest(worktreeRoot, command, description, ts)
+			if toolErr != nil {
+				log.Printf("tool=register_test error=%q elapsed=%dms", toolErr, time.Since(start).Milliseconds())
+				return mcp.NewToolResultError(toolErr.Error()), nil
+			}
+			log.Printf("tool=register_test command=%q ok elapsed=%dms", command, time.Since(start).Milliseconds())
+			return mcp.NewToolResultText(msg), nil
+		},
+	)
 }
 
 // newMCPHandler creates an http.Handler backed by a new MCP server instance
 // constrained to the given worktree directory.
-func newMCPHandler(worktreeRoot string) *server.StreamableHTTPServer {
+func newMCPHandler(worktreeRoot string, ts *tools.TestStore) *server.StreamableHTTPServer {
 	lm := locks.NewManager()
 	s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
-	registerTools(s, lm, worktreeRoot)
+	registerTools(s, lm, worktreeRoot, ts)
 	return server.NewStreamableHTTPServer(s)
 }

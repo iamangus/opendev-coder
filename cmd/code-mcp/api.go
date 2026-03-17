@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/iamangus/code-mcp/internal/manager"
+	"github.com/iamangus/code-mcp/internal/tools"
 )
 
 // registerAPIRoutes registers the management REST API routes directly on mux.
@@ -18,7 +20,7 @@ import (
 //	GET    /api/repos/{repo}/branches          – list branches for a repo
 //	POST   /api/repos/{repo}/branches          – create a worktree for a branch
 //	DELETE /api/repos/{repo}/branches/{branch} – remove a worktree / notify of merge
-func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, onAdded func(repo, branch, dir string), onRemoved func(repo, branch string)) {
+func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestStore, onAdded func(repo, branch, dir string), onRemoved func(repo, branch string)) {
 	// GET /api/repos
 	mux.HandleFunc("GET /api/repos", func(w http.ResponseWriter, r *http.Request) {
 		repos, err := mgr.Scan()
@@ -134,6 +136,38 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, onAdded func(re
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+
+	// POST /api/repos/{repo}/branches/{branch}/test/run
+	mux.HandleFunc("POST /api/repos/{repo}/branches/{branch}/test/run", func(w http.ResponseWriter, r *http.Request) {
+		repo := r.PathValue("repo")
+		branch := r.PathValue("branch")
+
+		wtDir, err := mgr.WorktreeDir(repo, branch)
+		if err != nil {
+			apiError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		// Optional timeout from request body.
+		var body struct {
+			TimeoutSeconds int `json:"timeout_seconds"`
+		}
+		// Body is optional; ignore decode errors.
+		_ = json.NewDecoder(r.Body).Decode(&body)
+
+		timeout := tools.DefaultTimeout
+		if body.TimeoutSeconds > 0 {
+			timeout = time.Duration(body.TimeoutSeconds) * time.Second
+		}
+
+		result, err := tools.RunRegisteredTest(wtDir, ts, timeout)
+		if err != nil {
+			apiError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, result)
 	})
 }
 

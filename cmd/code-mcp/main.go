@@ -11,6 +11,7 @@ import (
 
 	"github.com/iamangus/code-mcp/internal/locks"
 	"github.com/iamangus/code-mcp/internal/manager"
+	"github.com/iamangus/code-mcp/internal/tools"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -43,8 +44,9 @@ func runSingleServer(mode, addr, dir string) {
 	}
 
 	lm := locks.NewManager()
+	ts := tools.NewTestStore()
 	s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
-	registerTools(s, lm, dir)
+	registerTools(s, lm, dir, ts)
 
 	switch mode {
 	case "http":
@@ -72,13 +74,16 @@ func runMultiServer(addr, reposDir string) {
 		log.Fatalf("manager: %v", err)
 	}
 
+	// Shared test store across all worktrees.
+	ts := tools.NewTestStore()
+
 	// handlers maps "repo/branch" → http.Handler for that MCP server.
 	var mu sync.RWMutex
 	handlers := make(map[string]http.Handler)
 
 	addHandler := func(repo, branch, dir string) {
 		key := repo + "/" + branch
-		h := newMCPHandler(dir)
+		h := newMCPHandler(dir, ts)
 		mu.Lock()
 		handlers[key] = h
 		mu.Unlock()
@@ -125,7 +130,7 @@ func runMultiServer(addr, reposDir string) {
 
 	// API mux: /api/...
 	apiMux := http.NewServeMux()
-	registerAPIRoutes(apiMux, mgr, addHandler, removeHandler)
+	registerAPIRoutes(apiMux, mgr, ts, addHandler, removeHandler)
 
 	// Top-level handler: dispatch to API mux for /api/ paths, otherwise MCP mux.
 	// We use a manual prefix check rather than a single ServeMux because Go
