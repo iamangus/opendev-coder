@@ -2,13 +2,54 @@
 
 A Go MCP server that exposes coding tools scoped to a single Git worktree (branch).
 
+## Tool profiles
+
+Tools are grouped into named **profiles**. Each profile is served at a separate endpoint so consumers only see the tools they need.
+
+| Profile | Endpoint suffix | Tools |
+|---------|-----------------|-------|
+| `read`  | `/read/mcp`     | `read_file`, `read_lines`, `list_directory`, `grep_search`, `get_git_diff` |
+| `write` | `/write/mcp`    | `create_file`, `search_and_replace`, `execute_terminal_command`, `register_test` |
+
+## Tools
+
+### read profile
+
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `read_file` | `filepath` | Read the entire contents of a file |
+| `read_lines` | `filepath`, `start_line`, `end_line` | Read a line range (1-indexed, inclusive) |
+| `list_directory` | `dirpath`, `recursive` | List directory contents |
+| `grep_search` | `query`, `directory?` | Search for a regex/literal pattern across files |
+| `get_git_diff` | *(none)* | Show `git diff HEAD` and `git status --short` |
+
+### write profile
+
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `create_file` | `filepath`, `content` | Create a new file (fails if it already exists) |
+| `search_and_replace` | `filepath`, `search_block`, `replace_block` | Replace a block of text (exact then fuzzy) |
+| `execute_terminal_command` | `command`, `timeout_seconds?` | Run a shell command in the worktree |
+| `register_test` | `command`, `description?` | Register a test command for this worktree |
+
+All `filepath` and `dirpath` values are relative to the worktree root. Path traversal outside the root is rejected.
+
 ## Usage
 
-The server must be started with `--dir` pointing at the worktree root. All tool calls operate within that directory — callers do not pass a path to the worktree.
+### Single-server mode
 
 ```
 code-mcp --dir /path/to/worktree [--mode stdio|http] [--addr :8080]
 ```
+
+In HTTP mode each profile is available at `/{profile}/mcp`:
+
+```
+http://localhost:8080/read/mcp
+http://localhost:8080/write/mcp
+```
+
+In stdio mode the `read` profile is served (stdio is single-stream).
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -16,24 +57,43 @@ code-mcp --dir /path/to/worktree [--mode stdio|http] [--addr :8080]
 | `--mode` | `stdio` | Transport mode: `stdio` or `http` |
 | `--addr` | `:8080` | HTTP listen address (only used when `--mode=http`) |
 
-## Tools
+### Multi-server mode
 
-| Tool | Parameters | Description |
-|------|------------|-------------|
-| `read_file` | `filepath` | Read the entire contents of a file |
-| `read_lines` | `filepath`, `start_line`, `end_line` | Read a line range (1-indexed, inclusive) |
-| `create_file` | `filepath`, `content` | Create a new file (fails if it already exists) |
-| `list_directory` | `dirpath`, `recursive` | List directory contents |
-| `grep_search` | `query`, `directory?` | Search for a regex/literal pattern across files |
-| `search_and_replace` | `filepath`, `search_block`, `replace_block` | Replace a block of text (exact then fuzzy) |
-| `execute_terminal_command` | `command`, `timeout_seconds?` | Run a shell command in the worktree |
-| `get_git_diff` | *(none)* | Show `git diff HEAD` and `git status --short` |
+When `--dir` is omitted the server runs in multi-repo mode, scanning `--repos-dir` for
+repositories and their worktrees on startup.
 
-All `filepath` and `dirpath` values are relative to the `--dir` worktree root. Path traversal outside the root is rejected.
+```
+code-mcp [--repos-dir /repos] [--addr :8080]
+```
+
+MCP endpoints follow the pattern:
+
+```
+http://host:port/{repo}/{branch}/{profile}/mcp
+```
+
+For example:
+
+```
+http://localhost:8080/myrepo/main/read/mcp
+http://localhost:8080/myrepo/my-feature/write/mcp
+```
+
+Management API endpoints:
+
+```
+GET    /api/repos
+POST   /api/repos
+DELETE /api/repos/{repo}
+GET    /api/repos/{repo}/branches
+POST   /api/repos/{repo}/branches
+DELETE /api/repos/{repo}/branches/{branch}
+POST   /api/repos/{repo}/branches/{branch}/test/run
+```
 
 ## Docker
 
-A `Dockerfile` is provided that builds the server and runs it inside a container. On startup the container clones the target repository/branch and then launches the HTTP server.
+A `Dockerfile` is provided that builds the server and runs it in multi-server mode.
 
 ### Build
 
@@ -44,20 +104,22 @@ docker build -t code-mcp .
 ### Run
 
 ```sh
-docker run --rm -p 8080:8080 \
-  -e REPO_URL=https://github.com/owner/repo.git \
-  -e REPO_BRANCH=my-feature-branch \
-  code-mcp
+docker run --rm -p 8080:8080 code-mcp
+```
+
+Use the management API to add repositories after startup:
+
+```sh
+curl -X POST http://localhost:8080/api/repos \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://github.com/owner/repo.git","name":"myrepo"}'
 ```
 
 ### Environment variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `REPO_URL` | **yes** | — | Git clone URL of the repository |
-| `REPO_BRANCH` | no | *(default branch)* | Branch (or tag/SHA) to check out |
-| `GIT_TOKEN` | no | — | Personal access token injected into the HTTPS URL for private repos |
-| `MCP_MODE` | no | `http` | Transport mode: `http` or `stdio` |
-| `MCP_ADDR` | no | `:8080` | HTTP listen address (ignored when `MCP_MODE=stdio`) |
+| `REPOS_DIR` | no | `/repos` | Root directory for repositories |
+| `MCP_ADDR` | no | `:8080` | HTTP listen address |
 
-> **Private repositories** — set `GIT_TOKEN` to a PAT with read access. The token is embedded in the clone URL (`https://TOKEN@host/…`) and is never written to disk or logged.
+> **Private repositories** — set `GIT_TOKEN` on the clone request body or embed it in the URL (`https://TOKEN@host/…`).

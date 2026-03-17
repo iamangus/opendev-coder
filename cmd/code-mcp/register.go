@@ -12,8 +12,21 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// registerTools registers all MCP tools on s, scoped to worktreeRoot.
-func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string, ts *tools.TestStore) {
+// Profile identifies a named set of MCP tools.
+type Profile string
+
+const (
+	ProfileRead  Profile = "read"
+	ProfileWrite Profile = "write"
+)
+
+// Profiles is the ordered list of all known profiles. A handler is created for
+// each profile on every repo/branch.
+var Profiles = []Profile{ProfileRead, ProfileWrite}
+
+// registerReadTools registers the read-only tool set on s.
+// Included: read_file, read_lines, list_directory, grep_search, get_git_diff.
+func registerReadTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string) {
 	// read_file
 	s.AddTool(
 		mcp.NewTool("read_file",
@@ -64,35 +77,6 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string, 
 		},
 	)
 
-	// create_file
-	s.AddTool(
-		mcp.NewTool("create_file",
-			mcp.WithDescription("Create a new file with specified content within the worktree. Fails if the file already exists."),
-			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path for the new file, relative to the worktree root.")),
-			mcp.WithString("content", mcp.Required(), mcp.Description("Content to write to the new file.")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			start := time.Now()
-			fp, err := req.RequireString("filepath")
-			if err != nil {
-				log.Printf("tool=create_file error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			content, err := req.RequireString("content")
-			if err != nil {
-				log.Printf("tool=create_file filepath=%q error=%q elapsed=%dms", fp, err, time.Since(start).Milliseconds())
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			msg, toolErr := tools.CreateFile(worktreeRoot, fp, content, lm)
-			if toolErr != nil {
-				log.Printf("tool=create_file filepath=%q error=%q elapsed=%dms", fp, toolErr, time.Since(start).Milliseconds())
-				return mcp.NewToolResultError(toolErr.Error()), nil
-			}
-			log.Printf("tool=create_file filepath=%q ok elapsed=%dms", fp, time.Since(start).Milliseconds())
-			return mcp.NewToolResultText(msg), nil
-		},
-	)
-
 	// list_directory
 	s.AddTool(
 		mcp.NewTool("list_directory",
@@ -140,6 +124,56 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string, 
 			}
 			log.Printf("tool=grep_search query=%q directory=%q ok elapsed=%dms", query, directory, time.Since(start).Milliseconds())
 			return mcp.NewToolResultText(results), nil
+		},
+	)
+
+	// get_git_diff
+	s.AddTool(
+		mcp.NewTool("get_git_diff",
+			mcp.WithDescription("Get the git diff and status for the worktree."),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
+			diff, toolErr := tools.GetGitDiff(worktreeRoot)
+			if toolErr != nil {
+				log.Printf("tool=get_git_diff error=%q elapsed=%dms", toolErr, time.Since(start).Milliseconds())
+				return mcp.NewToolResultError(toolErr.Error()), nil
+			}
+			log.Printf("tool=get_git_diff ok elapsed=%dms", time.Since(start).Milliseconds())
+			return mcp.NewToolResultText(diff), nil
+		},
+	)
+}
+
+// registerWriteTools registers the write/mutate tool set on s.
+// Included: create_file, search_and_replace, execute_terminal_command, register_test.
+func registerWriteTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string, ts *tools.TestStore) {
+	// create_file
+	s.AddTool(
+		mcp.NewTool("create_file",
+			mcp.WithDescription("Create a new file with specified content within the worktree. Fails if the file already exists."),
+			mcp.WithString("filepath", mcp.Required(), mcp.Description("Path for the new file, relative to the worktree root.")),
+			mcp.WithString("content", mcp.Required(), mcp.Description("Content to write to the new file.")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			start := time.Now()
+			fp, err := req.RequireString("filepath")
+			if err != nil {
+				log.Printf("tool=create_file error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			content, err := req.RequireString("content")
+			if err != nil {
+				log.Printf("tool=create_file filepath=%q error=%q elapsed=%dms", fp, err, time.Since(start).Milliseconds())
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			msg, toolErr := tools.CreateFile(worktreeRoot, fp, content, lm)
+			if toolErr != nil {
+				log.Printf("tool=create_file filepath=%q error=%q elapsed=%dms", fp, toolErr, time.Since(start).Milliseconds())
+				return mcp.NewToolResultError(toolErr.Error()), nil
+			}
+			log.Printf("tool=create_file filepath=%q ok elapsed=%dms", fp, time.Since(start).Milliseconds())
+			return mcp.NewToolResultText(msg), nil
 		},
 	)
 
@@ -213,23 +247,6 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string, 
 		},
 	)
 
-	// get_git_diff
-	s.AddTool(
-		mcp.NewTool("get_git_diff",
-			mcp.WithDescription("Get the git diff and status for the worktree."),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			start := time.Now()
-			diff, toolErr := tools.GetGitDiff(worktreeRoot)
-			if toolErr != nil {
-				log.Printf("tool=get_git_diff error=%q elapsed=%dms", toolErr, time.Since(start).Milliseconds())
-				return mcp.NewToolResultError(toolErr.Error()), nil
-			}
-			log.Printf("tool=get_git_diff ok elapsed=%dms", time.Since(start).Milliseconds())
-			return mcp.NewToolResultText(diff), nil
-		},
-	)
-
 	// register_test
 	s.AddTool(
 		mcp.NewTool("register_test",
@@ -256,11 +273,16 @@ func registerTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string, 
 	)
 }
 
-// newMCPHandler creates an http.Handler backed by a new MCP server instance
-// constrained to the given worktree directory.
-func newMCPHandler(worktreeRoot string, ts *tools.TestStore) *server.StreamableHTTPServer {
+// newMCPHandler creates an http.Handler for the given profile, backed by a new
+// MCP server instance constrained to worktreeRoot.
+func newMCPHandler(profile Profile, worktreeRoot string, ts *tools.TestStore) *server.StreamableHTTPServer {
 	lm := locks.NewManager()
 	s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
-	registerTools(s, lm, worktreeRoot, ts)
+	switch profile {
+	case ProfileRead:
+		registerReadTools(s, lm, worktreeRoot)
+	case ProfileWrite:
+		registerWriteTools(s, lm, worktreeRoot, ts)
+	}
 	return server.NewStreamableHTTPServer(s)
 }

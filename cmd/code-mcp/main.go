@@ -34,8 +34,9 @@ func main() {
 	runMultiServer(*addr, *reposDir)
 }
 
-// runSingleServer is the original single-repo behaviour, kept for backward
-// compatibility when --dir is provided.
+// runSingleServer starts profile-aware MCP servers for a single worktree.
+// Each profile is served at /{profile}/mcp on the same HTTP address.
+// In stdio mode only the read profile is served (stdio is single-stream).
 func runSingleServer(mode, addr, dir string) {
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
@@ -43,20 +44,27 @@ func runSingleServer(mode, addr, dir string) {
 		os.Exit(1)
 	}
 
-	lm := locks.NewManager()
 	ts := tools.NewTestStore()
-	s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
-	registerTools(s, lm, dir, ts)
 
 	switch mode {
 	case "http":
-		httpSrv := server.NewStreamableHTTPServer(s)
-		log.Printf("Starting HTTP MCP server on %s (dir=%s)", addr, dir)
-		if err := httpSrv.Start(addr); err != nil {
+		mux := http.NewServeMux()
+		for _, p := range Profiles {
+			h := newMCPHandler(p, dir, ts)
+			pattern := "/" + string(p) + "/mcp"
+			mux.Handle(pattern, h)
+			log.Printf("registered /%s/mcp (dir=%s)", p, dir)
+		}
+		log.Printf("starting HTTP MCP server on %s (dir=%s)", addr, dir)
+		if err := http.ListenAndServe(addr, mux); err != nil {
 			fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
 			os.Exit(1)
 		}
 	default:
+		// stdio is inherently single-stream; serve the read profile.
+		lm := locks.NewManager()
+		s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
+		registerReadTools(s, lm, dir)
 		if err := server.ServeStdio(s); err != nil {
 			fmt.Fprintf(os.Stderr, "stdio server error: %v\n", err)
 			os.Exit(1)
@@ -66,7 +74,7 @@ func runSingleServer(mode, addr, dir string) {
 
 // runMultiServer starts the multi-repo HTTP server.
 //
-// MCP endpoint layout:  http://host:port/{repo}/{branch}/mcp
+// MCP endpoint layout:  http://host:port/{repo}/{branch}/{profile}/mcp
 // Management API:       http://host:port/api/repos[/...]
 func runMultiServer(addr, reposDir string) {
 	mgr, err := manager.New(reposDir)
@@ -77,25 +85,28 @@ func runMultiServer(addr, reposDir string) {
 	// Shared test store across all worktrees.
 	ts := tools.NewTestStore()
 
-	// handlers maps "repo/branch" → http.Handler for that MCP server.
+	// handlers maps "repo/branch/profile" → http.Handler for that MCP server.
 	var mu sync.RWMutex
 	handlers := make(map[string]http.Handler)
 
-	addHandler := func(repo, branch, dir string) {
-		key := repo + "/" + branch
-		h := newMCPHandler(dir, ts)
+	addHandlers := func(repo, branch, dir string) {
 		mu.Lock()
-		handlers[key] = h
-		mu.Unlock()
-		log.Printf("registered MCP handler for %s/%s -> %s", repo, branch, dir)
+		defer mu.Unlock()
+		for _, p := range Profiles {
+			key := repo + "/" + branch + "/" + string(p)
+			handlers[key] = newMCPHandler(p, dir, ts)
+			log.Printf("registered MCP handler for %s/%s/%s -> %s", repo, branch, p, dir)
+		}
 	}
 
-	removeHandler := func(repo, branch string) {
-		key := repo + "/" + branch
+	removeHandlers := func(repo, branch string) {
 		mu.Lock()
-		delete(handlers, key)
-		mu.Unlock()
-		log.Printf("unregistered MCP handler for %s/%s", repo, branch)
+		defer mu.Unlock()
+		for _, p := range Profiles {
+			key := repo + "/" + branch + "/" + string(p)
+			delete(handlers, key)
+			log.Printf("unregistered MCP handler for %s/%s/%s", repo, branch, p)
+		}
 	}
 
 	// Discover existing repos on startup.
@@ -105,7 +116,7 @@ func runMultiServer(addr, reposDir string) {
 	}
 	for _, repo := range repos {
 		for _, b := range repo.Branches {
-			addHandler(repo.Name, b.Name, b.Dir)
+			addHandlers(repo.Name, b.Name, b.Dir)
 		}
 	}
 	log.Printf("startup: found %d repo(s) in %s", len(repos), reposDir)
@@ -113,16 +124,18 @@ func runMultiServer(addr, reposDir string) {
 	// Use two separate ServeMux instances to avoid Go 1.22+ pattern-conflict
 	// panics between the catch-all MCP wildcard and the API routes.
 
-	// MCP mux: /{repo}/{branch}/mcp
+	// MCP mux: /{repo}/{branch}/{profile}/mcp
 	mcpMux := http.NewServeMux()
-	mcpMux.HandleFunc("/{repo}/{branch}/mcp", func(w http.ResponseWriter, r *http.Request) {
+	mcpMux.HandleFunc("/{repo}/{branch}/{profile}/mcp", func(w http.ResponseWriter, r *http.Request) {
 		repo := r.PathValue("repo")
 		branch := r.PathValue("branch")
+		profile := r.PathValue("profile")
+		key := repo + "/" + branch + "/" + profile
 		mu.RLock()
-		h, ok := handlers[repo+"/"+branch]
+		h, ok := handlers[key]
 		mu.RUnlock()
 		if !ok {
-			http.Error(w, fmt.Sprintf("no MCP server for %s/%s", repo, branch), http.StatusNotFound)
+			http.Error(w, fmt.Sprintf("no MCP server for %s/%s/%s", repo, branch, profile), http.StatusNotFound)
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -130,14 +143,9 @@ func runMultiServer(addr, reposDir string) {
 
 	// API mux: /api/...
 	apiMux := http.NewServeMux()
-	registerAPIRoutes(apiMux, mgr, ts, addHandler, removeHandler)
+	registerAPIRoutes(apiMux, mgr, ts, addHandlers, removeHandlers)
 
 	// Top-level handler: dispatch to API mux for /api/ paths, otherwise MCP mux.
-	// We use a manual prefix check rather than a single ServeMux because Go
-	// 1.22+ strict pattern-conflict detection panics when the wildcard MCP
-	// route (/{repo}/{branch}/mcp) is registered alongside method-qualified API
-	// routes (e.g. DELETE /api/repos/{repo}) in the same mux — both could match
-	// a path like /api/repos/mcp.
 	top := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 			apiMux.ServeHTTP(w, r)
