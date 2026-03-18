@@ -212,6 +212,12 @@ func (m *Manager) CreateWorktree(repo, branch, base string) error {
 		return fmt.Errorf("repo %q not found", repo)
 	}
 
+	// The default branch is already checked out in the main repo directory —
+	// there is no separate worktree for it and git will refuse to add one.
+	if defaultBranch, _ := getDefaultBranch(repoDir); branch == defaultBranch {
+		return nil
+	}
+
 	worktreeDir := filepath.Join(m.reposDir, repo+"-"+branch)
 	if _, err := os.Stat(worktreeDir); err == nil {
 		// Worktree already exists — nothing to do.
