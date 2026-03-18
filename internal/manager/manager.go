@@ -139,9 +139,12 @@ func (m *Manager) scan() ([]RepoInfo, error) {
 	return repos, nil
 }
 
-// CloneRepo clones repoURL into <reposDir>/<name>.
-// token is an optional HTTPS auth token (embedded in the URL).
-func (m *Manager) CloneRepo(repoURL, name, token string) error {
+// SyncRepo ensures the repository is present and up to date under <reposDir>/<name>.
+// If the repo has not been cloned yet, it is cloned from repoURL.
+// If it is already present, a fetch is run to bring it up to date.
+// Authentication is handled automatically via the manager's configured token.
+// This operation is idempotent: calling it multiple times is safe.
+func (m *Manager) SyncRepo(repoURL, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -151,17 +154,17 @@ func (m *Manager) CloneRepo(repoURL, name, token string) error {
 	}
 
 	destDir := filepath.Join(m.reposDir, name)
-	if _, err := os.Stat(destDir); err == nil {
-		return fmt.Errorf("repo %q already exists", name)
+	if _, err := os.Stat(destDir); os.IsNotExist(err) {
+		// Repo not present — clone it.
+		if out, err := m.runCmd("", "git", "clone", repoURL, destDir); err != nil {
+			return fmt.Errorf("git clone: %w\n%s", err, out)
+		}
+		return nil
 	}
 
-	cloneURL := repoURL
-	if token != "" {
-		cloneURL = embedToken(repoURL, token)
-	}
-
-	if out, err := m.runCmd("", "git", "clone", cloneURL, destDir); err != nil {
-		return fmt.Errorf("git clone: %w\n%s", err, out)
+	// Repo already present — fetch to bring it up to date.
+	if out, err := m.runCmd(destDir, "git", "fetch", "--quiet", "origin"); err != nil {
+		return fmt.Errorf("git fetch: %w\n%s", err, out)
 	}
 	return nil
 }
@@ -211,7 +214,8 @@ func (m *Manager) CreateWorktree(repo, branch, base string) error {
 
 	worktreeDir := filepath.Join(m.reposDir, repo+"-"+branch)
 	if _, err := os.Stat(worktreeDir); err == nil {
-		return fmt.Errorf("worktree for branch %q already exists", branch)
+		// Worktree already exists — nothing to do.
+		return nil
 	}
 
 	// Fetch so that newly pushed branches are discoverable.
@@ -458,15 +462,6 @@ func deriveBranchName(worktreeDir, mainDir, repoName, defaultBranch, gitBranch s
 		return gitBranch
 	}
 	return base
-}
-
-func embedToken(repoURL, token string) string {
-	for _, pfx := range []string{"https://", "http://"} {
-		if strings.HasPrefix(repoURL, pfx) {
-			return pfx + token + "@" + repoURL[len(pfx):]
-		}
-	}
-	return repoURL
 }
 
 // runCmdBasic runs a git command without injecting auth credentials.

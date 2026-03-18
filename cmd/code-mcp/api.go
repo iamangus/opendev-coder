@@ -18,7 +18,7 @@ import (
 // Routes:
 //
 //	GET    /api/repos                                        – list all repos and their branches
-//	POST   /api/repos                                        – clone a new repo
+//	POST   /api/repos                                        – clone or sync a repo
 //	DELETE /api/repos/{repo}                                 – remove a repo and all its worktrees
 //	GET    /api/repos/{repo}/branches                        – list branches for a repo
 //	POST   /api/repos/{repo}/branches                        – create a worktree for a branch
@@ -39,12 +39,11 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 		writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
 	})
 
-	// POST /api/repos  {"url":"...", "name":"...", "token":"..."}
+	// POST /api/repos  {"url":"...", "name":"..."}
 	mux.HandleFunc("POST /api/repos", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			URL   string `json:"url"`
-			Name  string `json:"name"`
-			Token string `json:"token"`
+			URL  string `json:"url"`
+			Name string `json:"name"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
@@ -54,7 +53,7 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			apiError(w, "url and name are required", http.StatusBadRequest)
 			return
 		}
-		if err := mgr.CloneRepo(body.URL, body.Name, body.Token); err != nil {
+		if err := mgr.SyncRepo(body.URL, body.Name); err != nil {
 			apiError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
