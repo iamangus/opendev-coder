@@ -209,6 +209,7 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 
 		wtDir, err := mgr.WorktreeDir(repo, branch)
 		if err != nil {
+			logger.Error("test run: worktree not found", "repo", repo, "branch", branch, "error", err)
 			apiError(w, err.Error(), http.StatusNotFound, logger)
 			return
 		}
@@ -225,11 +226,23 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			timeout = time.Duration(body.TimeoutSeconds) * time.Second
 		}
 
-		result, err := tools.RunRegisteredTest(wtDir, ts, timeout)
+		logger.Info("test run: starting", "repo", repo, "branch", branch, "timeout_s", timeout.Seconds())
+
+		result, err := tools.RunRegisteredTest(wtDir, ts, timeout, logger)
 		if err != nil {
+			logger.Error("test run: failed to execute", "repo", repo, "branch", branch, "error", err)
 			apiError(w, err.Error(), http.StatusNotFound, logger)
 			return
 		}
+
+		logger.Info("test run: completed",
+			"repo", repo,
+			"branch", branch,
+			"exit_code", result.ExitCode,
+			"timed_out", result.TimedOut,
+			"stdout", result.Stdout,
+			"stderr", result.Stderr,
+		)
 
 		writeJSON(w, http.StatusOK, result, logger)
 	})

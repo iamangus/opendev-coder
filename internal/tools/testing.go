@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -72,7 +73,7 @@ func RegisterTest(worktreeRoot, command, description string, store *TestStore) (
 // RunRegisteredTest looks up the registered test for the given worktree and
 // executes it. Returns a structured ExecResult. If no test is registered,
 // returns an error.
-func RunRegisteredTest(worktreeRoot string, store *TestStore, timeout time.Duration) (*ExecResult, error) {
+func RunRegisteredTest(worktreeRoot string, store *TestStore, timeout time.Duration, logger *slog.Logger) (*ExecResult, error) {
 	reg, ok := store.Get(worktreeRoot)
 	if !ok {
 		return nil, fmt.Errorf("no test registered for worktree %q", worktreeRoot)
@@ -81,6 +82,8 @@ func RunRegisteredTest(worktreeRoot string, store *TestStore, timeout time.Durat
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
+
+	logger.Info("test run: executing command", "worktree", worktreeRoot, "command", reg.Command, "timeout_s", timeout.Seconds())
 
 	stdout, stderr, exitCode, timedOut, err := ExecuteTerminalCommand(worktreeRoot, reg.Command, timeout)
 	if err != nil {
