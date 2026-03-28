@@ -19,6 +19,9 @@ RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
+COPY --from=builder /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:$PATH"
+
 COPY --from=builder /code-mcp /usr/local/bin/code-mcp
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
