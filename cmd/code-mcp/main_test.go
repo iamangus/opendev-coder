@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/iamangus/code-mcp/internal/gitops"
 	"github.com/iamangus/code-mcp/internal/locks"
 	"github.com/iamangus/code-mcp/internal/manager"
 	"github.com/iamangus/code-mcp/internal/tools"
@@ -62,7 +63,7 @@ func TestNewMCPHandler_ProfilesProduceHandlers(t *testing.T) {
 	dir := t.TempDir()
 	ts := tools.NewTestStore()
 	for _, p := range Profiles {
-		h := newMCPHandler(p, dir, ts)
+		h := newMCPHandler(p, dir, ts, slog.Default())
 		if h == nil {
 			t.Errorf("newMCPHandler(%q) returned nil", p)
 		}
@@ -75,7 +76,7 @@ func TestRegisterReadTools_ToolList(t *testing.T) {
 	dir := t.TempDir()
 	lm := locks.NewManager(slog.Default())
 	s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
-	registerReadTools(s, lm, dir)
+	registerReadTools(s, lm, dir, slog.Default())
 
 	// Use stateless mode so tests don't need to manage session negotiation.
 	h := server.NewStreamableHTTPServer(s, server.WithStateLess(true))
@@ -106,7 +107,7 @@ func TestRegisterWriteTools_ToolList(t *testing.T) {
 	lm := locks.NewManager(slog.Default())
 	store := tools.NewTestStore()
 	s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
-	registerWriteTools(s, lm, dir, store)
+	registerWriteTools(s, lm, dir, store, slog.Default())
 
 	// Use stateless mode so tests don't need to manage session negotiation.
 	h := server.NewStreamableHTTPServer(s, server.WithStateLess(true))
@@ -134,13 +135,19 @@ func TestRegisterWriteTools_ToolList(t *testing.T) {
 // to the correct handler and that unknown profiles or repos return 404.
 func TestMultiServerRouting(t *testing.T) {
 	reposDir := t.TempDir()
-	repoDir := filepath.Join(reposDir, "myrepo")
+	repoDir := filepath.Join(reposDir, "myrepo.git")
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	initGitRepo(t, repoDir)
+	// Create a worktree directory for the main branch so Scan can discover it.
+	wtDir := filepath.Join(reposDir, "myrepo+main")
+	if err := os.MkdirAll(wtDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
-	mgr, err := manager.New(reposDir, "")
+	gitOps := gitops.NewExec(slog.Default(), "")
+	mgr, err := manager.New(reposDir, gitOps, slog.Default())
 	if err != nil {
 		t.Fatalf("manager.New: %v", err)
 	}
@@ -156,7 +163,7 @@ func TestMultiServerRouting(t *testing.T) {
 		for _, b := range repo.Branches {
 			for _, p := range Profiles {
 				key := repo.Name + "/" + b.Name + "/" + string(p)
-				handlers[key] = newMCPHandler(p, b.Dir, store)
+				handlers[key] = newMCPHandler(p, b.Dir, store, slog.Default())
 			}
 		}
 	}

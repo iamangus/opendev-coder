@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,16 +20,40 @@ import (
 
 func main() {
 	var (
-		mode     = flag.String("mode", "stdio", "Transport mode: stdio or http (single-server mode only)")
-		addr     = flag.String("addr", ":8080", "HTTP listen address")
-		dir      = flag.String("dir", "", "Single-server mode: absolute path to the worktree root directory")
-		reposDir = flag.String("repos-dir", "/repos", "Multi-server mode: directory containing all repositories")
+		mode      = flag.String("mode", "stdio", "Transport mode: stdio or http (single-server mode only)")
+		addr      = flag.String("addr", ":8080", "HTTP listen address")
+		dir       = flag.String("dir", "", "Single-server mode: absolute path to the worktree root directory")
+		reposDir  = flag.String("repos-dir", "/repos", "Multi-server mode: directory containing all repositories")
+		logFormat = flag.String("log-format", "text", "log output format: text or json")
+		logLevel  = flag.String("log-level", "info", "log level: debug, info, warn, error")
 	)
 	flag.Parse()
 
+	var level slog.Level
+	switch strings.ToLower(*logLevel) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	if *logFormat == "json" {
+		handler = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stderr, opts)
+	}
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+
 	// ── Single-server (backward-compatible) mode ──────────────────────────
 	if *dir != "" {
-		runSingleServer(*mode, *addr, *dir)
+		runSingleServer(*mode, *addr, *dir, logger)
 		return
 	}
 
@@ -44,20 +67,20 @@ func main() {
 	if githubToken != "" {
 		if owner := os.Getenv("GITHUB_OWNER"); owner != "" {
 			ghClient = githubpkg.NewHTTPClient(githubToken, owner, slog.Default())
-			log.Printf("GitHub PR integration enabled (owner: %s)", owner)
+			logger.Info("GitHub PR integration enabled", "owner", owner)
 		} else {
-			log.Printf("warning: GITHUB_TOKEN set but GITHUB_OWNER is missing — PR integration disabled")
+			logger.Warn("GITHUB_TOKEN set but GITHUB_OWNER is missing, PR integration disabled")
 		}
 	}
 
 	// ── Multi-server mode ──────────────────────────────────────────────────
-	runMultiServer(*addr, *reposDir, githubToken, ghClient)
+	runMultiServer(*addr, *reposDir, githubToken, ghClient, logger)
 }
 
 // runSingleServer starts profile-aware MCP servers for a single worktree.
 // Each profile is served at /{profile}/mcp on the same HTTP address.
 // In stdio mode only the read profile is served (stdio is single-stream).
-func runSingleServer(mode, addr, dir string) {
+func runSingleServer(mode, addr, dir string, logger *slog.Logger) {
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		fmt.Fprintf(os.Stderr, "error: --dir %q does not exist or is not a directory\n", dir)
@@ -70,12 +93,12 @@ func runSingleServer(mode, addr, dir string) {
 	case "http":
 		mux := http.NewServeMux()
 		for _, p := range Profiles {
-			h := newMCPHandler(p, dir, ts)
+			h := newMCPHandler(p, dir, ts, logger)
 			pattern := "/" + string(p) + "/mcp"
 			mux.Handle(pattern, h)
-			log.Printf("registered /%s/mcp (dir=%s)", p, dir)
+			logger.Info("registered MCP handler", "profile", p, "dir", dir)
 		}
-		log.Printf("starting HTTP MCP server on %s (dir=%s)", addr, dir)
+		logger.Info("starting HTTP MCP server", "addr", addr, "dir", dir)
 		if err := http.ListenAndServe(addr, mux); err != nil {
 			fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
 			os.Exit(1)
@@ -84,7 +107,7 @@ func runSingleServer(mode, addr, dir string) {
 		// stdio is inherently single-stream; serve the read profile.
 		lm := locks.NewManager(slog.Default())
 		s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
-		registerReadTools(s, lm, dir)
+		registerReadTools(s, lm, dir, logger)
 		if err := server.ServeStdio(s); err != nil {
 			fmt.Fprintf(os.Stderr, "stdio server error: %v\n", err)
 			os.Exit(1)
@@ -96,11 +119,12 @@ func runSingleServer(mode, addr, dir string) {
 //
 // MCP endpoint layout:  http://host:port/{repo}/{branch}/{profile}/mcp
 // Management API:       http://host:port/api/repos[/...]
-func runMultiServer(addr, reposDir, githubToken string, ghClient githubpkg.Client) {
+func runMultiServer(addr, reposDir, githubToken string, ghClient githubpkg.Client, logger *slog.Logger) {
 	gitOps := gitops.NewExec(slog.Default(), githubToken)
 	mgr, err := manager.New(reposDir, gitOps, slog.Default())
 	if err != nil {
-		log.Fatalf("manager: %v", err)
+		logger.Error("manager initialization failed", "error", err)
+		os.Exit(1)
 	}
 
 	// Shared test store across all worktrees.
@@ -115,22 +139,22 @@ func runMultiServer(addr, reposDir, githubToken string, ghClient githubpkg.Clien
 		defer mu.Unlock()
 		for _, p := range Profiles {
 			key := repo + "/" + branch + "/" + string(p)
-			handlers[key] = newMCPHandler(p, dir, ts)
-			log.Printf("registered MCP handler for %s/%s/%s -> %s", repo, branch, p, dir)
+			handlers[key] = newMCPHandler(p, dir, ts, logger)
+			logger.Info("registered MCP handler", "repo", repo, "branch", branch, "profile", p, "dir", dir)
 		}
 		// Auto-register the test command from .opendev/config.yaml if present.
 		// Failures are logged but not fatal here — the branch creation REST
 		// endpoint is responsible for failing loudly on missing config.
 		cfg, err := config.Load(dir)
 		if err != nil {
-			log.Printf("config: %s/%s: %v (test command not registered)", repo, branch, err)
+			logger.Warn("config: test command not registered", "repo", repo, "branch", branch, "error", err)
 			return
 		}
 		if _, err := tools.RegisterTest(dir, cfg.TestCommand, "", ts); err != nil {
-			log.Printf("config: %s/%s: registering test command: %v", repo, branch, err)
+			logger.Warn("config: registering test command failed", "repo", repo, "branch", branch, "error", err)
 			return
 		}
-		log.Printf("config: %s/%s: registered test command: %s", repo, branch, cfg.TestCommand)
+		logger.Info("config: registered test command", "repo", repo, "branch", branch, "cmd", cfg.TestCommand)
 	}
 
 	removeHandlers := func(repo, branch string) {
@@ -139,21 +163,22 @@ func runMultiServer(addr, reposDir, githubToken string, ghClient githubpkg.Clien
 		for _, p := range Profiles {
 			key := repo + "/" + branch + "/" + string(p)
 			delete(handlers, key)
-			log.Printf("unregistered MCP handler for %s/%s/%s", repo, branch, p)
+			logger.Info("unregistered MCP handler", "repo", repo, "branch", branch, "profile", p)
 		}
 	}
 
 	// Discover existing repos on startup.
 	repos, err := mgr.Scan()
 	if err != nil {
-		log.Fatalf("scanning repos: %v", err)
+		logger.Error("scanning repos failed", "error", err)
+		os.Exit(1)
 	}
 	for _, repo := range repos {
 		for _, b := range repo.Branches {
 			addHandlers(repo.Name, b.Name, b.Dir)
 		}
 	}
-	log.Printf("startup: found %d repo(s) in %s", len(repos), reposDir)
+	logger.Info("startup: repos discovered", "count", len(repos), "dir", reposDir)
 
 	// Use two separate ServeMux instances to avoid Go 1.22+ pattern-conflict
 	// panics between the catch-all MCP wildcard and the API routes.
@@ -177,7 +202,7 @@ func runMultiServer(addr, reposDir, githubToken string, ghClient githubpkg.Clien
 
 	// API mux: /api/...
 	apiMux := http.NewServeMux()
-	registerAPIRoutes(apiMux, mgr, ts, ghClient, addHandlers, removeHandlers)
+	registerAPIRoutes(apiMux, mgr, ts, ghClient, logger, addHandlers, removeHandlers)
 
 	// Top-level handler: dispatch to API mux for /api/ paths, otherwise MCP mux.
 	top := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,8 +213,9 @@ func runMultiServer(addr, reposDir, githubToken string, ghClient githubpkg.Clien
 		mcpMux.ServeHTTP(w, r)
 	})
 
-	log.Printf("starting multi-server on %s  (repos-dir=%s)", addr, reposDir)
+	logger.Info("starting multi-server", "addr", addr, "repos_dir", reposDir)
 	if err := http.ListenAndServe(addr, top); err != nil {
-		log.Fatalf("server: %v", err)
+		logger.Error("server failed", "error", err)
+		os.Exit(1)
 	}
 }

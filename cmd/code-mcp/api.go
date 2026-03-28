@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -28,15 +28,15 @@ import (
 //	POST   /api/repos/{repo}/pulls                           – create a draft PR (GitHub)
 //	PATCH  /api/repos/{repo}/pulls/{number}                  – update PR body (GitHub)
 //	POST   /api/repos/{repo}/pulls/{number}/ready            – promote draft PR to ready-for-review (GitHub)
-func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestStore, ghClient githubpkg.Client, onAdded func(repo, branch, dir string), onRemoved func(repo, branch string)) {
+func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestStore, ghClient githubpkg.Client, logger *slog.Logger, onAdded func(repo, branch, dir string), onRemoved func(repo, branch string)) {
 	// GET /api/repos
 	mux.HandleFunc("GET /api/repos", func(w http.ResponseWriter, r *http.Request) {
 		repos, err := mgr.Scan()
 		if err != nil {
-			apiError(w, err.Error(), http.StatusInternalServerError)
+			apiError(w, err.Error(), http.StatusInternalServerError, logger)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
+		writeJSON(w, http.StatusOK, map[string]any{"repos": repos}, logger)
 	})
 
 	// POST /api/repos  {"url":"...", "name":"..."}
@@ -46,15 +46,15 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			Name string `json:"name"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest, logger)
 			return
 		}
 		if body.URL == "" || body.Name == "" {
-			apiError(w, "url and name are required", http.StatusBadRequest)
+			apiError(w, "url and name are required", http.StatusBadRequest, logger)
 			return
 		}
 		if err := mgr.SyncRepo(body.URL, body.Name); err != nil {
-			apiError(w, err.Error(), http.StatusBadRequest)
+			apiError(w, err.Error(), http.StatusBadRequest, logger)
 			return
 		}
 		// Scan to discover the default branch of the newly cloned repo.
@@ -64,11 +64,11 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 				for _, b := range repo.Branches {
 					onAdded(repo.Name, b.Name, b.Dir)
 				}
-				writeJSON(w, http.StatusCreated, map[string]any{"repo": repo})
+				writeJSON(w, http.StatusCreated, map[string]any{"repo": repo}, logger)
 				return
 			}
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"repo": map[string]string{"name": body.Name}})
+		writeJSON(w, http.StatusCreated, map[string]any{"repo": map[string]string{"name": body.Name}}, logger)
 	})
 
 	// DELETE /api/repos/{repo}
@@ -85,10 +85,10 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			}
 		}
 		if err := mgr.RemoveRepo(repo); err != nil {
-			apiError(w, err.Error(), http.StatusNotFound)
+			apiError(w, err.Error(), http.StatusNotFound, logger)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true}, logger)
 	})
 
 	// GET /api/repos/{repo}/branches
@@ -96,16 +96,16 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 		repo := r.PathValue("repo")
 		repos, err := mgr.Scan()
 		if err != nil {
-			apiError(w, err.Error(), http.StatusInternalServerError)
+			apiError(w, err.Error(), http.StatusInternalServerError, logger)
 			return
 		}
 		for _, ri := range repos {
 			if ri.Name == repo {
-				writeJSON(w, http.StatusOK, map[string]any{"branches": ri.Branches})
+				writeJSON(w, http.StatusOK, map[string]any{"branches": ri.Branches}, logger)
 				return
 			}
 		}
-		apiError(w, "repo not found", http.StatusNotFound)
+		apiError(w, "repo not found", http.StatusNotFound, logger)
 	})
 
 	// POST /api/repos/{repo}/branches  {"branch":"...", "base":"..."}
@@ -119,16 +119,16 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			Base   string `json:"base"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest, logger)
 			return
 		}
 		if body.Branch == "" {
-			apiError(w, "branch is required", http.StatusBadRequest)
+			apiError(w, "branch is required", http.StatusBadRequest, logger)
 			return
 		}
 		wtDir, err := mgr.CreateWorktree(repo, body.Branch, body.Base)
 		if err != nil {
-			apiError(w, err.Error(), http.StatusBadRequest)
+			apiError(w, err.Error(), http.StatusBadRequest, logger)
 			return
 		}
 		// Fail loudly if .opendev/config.yaml is missing or invalid — the
@@ -139,13 +139,13 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			if wtDir != mgr.RepoDir(repo) {
 				_ = mgr.RemoveWorktree(repo, body.Branch)
 			}
-			apiError(w, "branch created but .opendev/config.yaml is invalid: "+err.Error(), http.StatusBadRequest)
+			apiError(w, "branch created but .opendev/config.yaml is invalid: "+err.Error(), http.StatusBadRequest, logger)
 			return
 		}
 		onAdded(repo, body.Branch, wtDir)
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"branch": manager.BranchInfo{Name: body.Branch, Dir: wtDir},
-		})
+		}, logger)
 	})
 
 	// DELETE /api/repos/{repo}/branches/{branch}
@@ -154,10 +154,10 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 		branch := r.PathValue("branch")
 		onRemoved(repo, branch)
 		if err := mgr.RemoveWorktree(repo, branch); err != nil {
-			apiError(w, err.Error(), http.StatusNotFound)
+			apiError(w, err.Error(), http.StatusNotFound, logger)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true}, logger)
 	})
 
 	// POST /api/repos/{repo}/branches/{branch}/merge  {"into":"<target-branch>"}
@@ -171,22 +171,22 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			Into string `json:"into"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest, logger)
 			return
 		}
 		if body.Into == "" {
-			apiError(w, "into is required", http.StatusBadRequest)
+			apiError(w, "into is required", http.StatusBadRequest, logger)
 			return
 		}
 		if err := mgr.MergeBranch(repo, sourceBranch, body.Into); err != nil {
 			if conflictErr, ok := err.(*manager.MergeConflictError); ok {
-				writeJSON(w, http.StatusConflict, map[string]any{"error": conflictErr.Output})
+				writeJSON(w, http.StatusConflict, map[string]any{"error": conflictErr.Output}, logger)
 				return
 			}
-			apiError(w, err.Error(), http.StatusNotFound)
+			apiError(w, err.Error(), http.StatusNotFound, logger)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true}, logger)
 	})
 
 	// GET /api/repos/{repo}/branches/{branch}/commits
@@ -196,10 +196,10 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 		branch := r.PathValue("branch")
 		commits, err := mgr.GetCommits(repo, branch)
 		if err != nil {
-			apiError(w, err.Error(), http.StatusNotFound)
+			apiError(w, err.Error(), http.StatusNotFound, logger)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"commits": commits})
+		writeJSON(w, http.StatusOK, map[string]any{"commits": commits}, logger)
 	})
 
 	// POST /api/repos/{repo}/branches/{branch}/test/run
@@ -209,7 +209,7 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 
 		wtDir, err := mgr.WorktreeDir(repo, branch)
 		if err != nil {
-			apiError(w, err.Error(), http.StatusNotFound)
+			apiError(w, err.Error(), http.StatusNotFound, logger)
 			return
 		}
 
@@ -227,11 +227,11 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 
 		result, err := tools.RunRegisteredTest(wtDir, ts, timeout)
 		if err != nil {
-			apiError(w, err.Error(), http.StatusNotFound)
+			apiError(w, err.Error(), http.StatusNotFound, logger)
 			return
 		}
 
-		writeJSON(w, http.StatusOK, result)
+		writeJSON(w, http.StatusOK, result, logger)
 	})
 
 	// ── GitHub PR endpoints (require ghClient; return 501 if not configured) ─
@@ -240,7 +240,7 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 	mux.HandleFunc("POST /api/repos/{repo}/pulls", func(w http.ResponseWriter, r *http.Request) {
 		repo := r.PathValue("repo")
 		if ghClient == nil {
-			apiError(w, "GitHub integration not configured (set GITHUB_TOKEN and GITHUB_OWNER)", http.StatusNotImplemented)
+			apiError(w, "GitHub integration not configured (set GITHUB_TOKEN and GITHUB_OWNER)", http.StatusNotImplemented, logger)
 			return
 		}
 		var body struct {
@@ -251,33 +251,33 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			Draft bool   `json:"draft"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest, logger)
 			return
 		}
 		if body.Title == "" || body.Head == "" || body.Base == "" {
-			apiError(w, "title, head, and base are required", http.StatusBadRequest)
+			apiError(w, "title, head, and base are required", http.StatusBadRequest, logger)
 			return
 		}
 		pr, err := ghClient.CreatePR(r.Context(), githubpkg.CreatePROptions{
 			Repo: repo, Title: body.Title, Head: body.Head, Base: body.Base, Body: body.Body, Draft: body.Draft,
 		})
 		if err != nil {
-			apiError(w, "creating PR: "+err.Error(), http.StatusBadGateway)
+			apiError(w, "creating PR: "+err.Error(), http.StatusBadGateway, logger)
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"pr_number": pr.Number, "pr_url": pr.HTMLURL})
+		writeJSON(w, http.StatusCreated, map[string]any{"pr_number": pr.Number, "pr_url": pr.HTMLURL}, logger)
 	})
 
 	// PATCH /api/repos/{repo}/pulls/{number}  {"body":"...", "draft":false}
 	mux.HandleFunc("PATCH /api/repos/{repo}/pulls/{number}", func(w http.ResponseWriter, r *http.Request) {
 		repo := r.PathValue("repo")
 		if ghClient == nil {
-			apiError(w, "GitHub integration not configured (set GITHUB_TOKEN and GITHUB_OWNER)", http.StatusNotImplemented)
+			apiError(w, "GitHub integration not configured (set GITHUB_TOKEN and GITHUB_OWNER)", http.StatusNotImplemented, logger)
 			return
 		}
 		prNumber, err := strconv.Atoi(r.PathValue("number"))
 		if err != nil || prNumber <= 0 {
-			apiError(w, "invalid PR number", http.StatusBadRequest)
+			apiError(w, "invalid PR number", http.StatusBadRequest, logger)
 			return
 		}
 		var body struct {
@@ -285,44 +285,44 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ts *tools.TestS
 			Draft bool   `json:"draft"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			apiError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest, logger)
 			return
 		}
 		if err := ghClient.UpdatePR(r.Context(), repo, prNumber, body.Body); err != nil {
-			apiError(w, "updating PR: "+err.Error(), http.StatusBadGateway)
+			apiError(w, "updating PR: "+err.Error(), http.StatusBadGateway, logger)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true}, logger)
 	})
 
 	// POST /api/repos/{repo}/pulls/{number}/ready
 	mux.HandleFunc("POST /api/repos/{repo}/pulls/{number}/ready", func(w http.ResponseWriter, r *http.Request) {
 		repo := r.PathValue("repo")
 		if ghClient == nil {
-			apiError(w, "GitHub integration not configured (set GITHUB_TOKEN and GITHUB_OWNER)", http.StatusNotImplemented)
+			apiError(w, "GitHub integration not configured (set GITHUB_TOKEN and GITHUB_OWNER)", http.StatusNotImplemented, logger)
 			return
 		}
 		prNumber, err := strconv.Atoi(r.PathValue("number"))
 		if err != nil || prNumber <= 0 {
-			apiError(w, "invalid PR number", http.StatusBadRequest)
+			apiError(w, "invalid PR number", http.StatusBadRequest, logger)
 			return
 		}
 		if err := ghClient.PromotePR(r.Context(), repo, prNumber); err != nil {
-			apiError(w, "promoting PR: "+err.Error(), http.StatusBadGateway)
+			apiError(w, "promoting PR: "+err.Error(), http.StatusBadGateway, logger)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true}, logger)
 	})
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
+func writeJSON(w http.ResponseWriter, status int, v any, logger *slog.Logger) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("api: writeJSON encode error: %v", err)
+		logger.Error("api: JSON encode failed", "error", err)
 	}
 }
 
-func apiError(w http.ResponseWriter, msg string, status int) {
-	writeJSON(w, status, map[string]any{"error": msg})
+func apiError(w http.ResponseWriter, msg string, status int, logger *slog.Logger) {
+	writeJSON(w, status, map[string]any{"error": msg}, logger)
 }
