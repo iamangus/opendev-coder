@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -72,7 +73,7 @@ func TestNewMCPHandler_ProfilesProduceHandlers(t *testing.T) {
 // read-only tools and not write tools.
 func TestRegisterReadTools_ToolList(t *testing.T) {
 	dir := t.TempDir()
-	lm := locks.NewManager()
+	lm := locks.NewManager(slog.Default())
 	s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
 	registerReadTools(s, lm, dir)
 
@@ -102,7 +103,7 @@ func TestRegisterReadTools_ToolList(t *testing.T) {
 // write/mutate tools and not read tools.
 func TestRegisterWriteTools_ToolList(t *testing.T) {
 	dir := t.TempDir()
-	lm := locks.NewManager()
+	lm := locks.NewManager(slog.Default())
 	store := tools.NewTestStore()
 	s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
 	registerWriteTools(s, lm, dir, store)

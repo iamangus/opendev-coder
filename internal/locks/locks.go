@@ -1,39 +1,137 @@
 package locks
 
 import (
+	"context"
+	"log/slog"
 	"sync"
+	"time"
 )
 
-// Manager provides per-path read/write locking.
+const DefaultWarnAfter = 100 * time.Millisecond
+
+type lockEntry struct {
+	rwmu sync.RWMutex
+	refs int
+}
+
 type Manager struct {
-	mu    sync.Mutex
-	locks map[string]*sync.RWMutex
+	mu        sync.Mutex
+	locks     map[string]*lockEntry
+	logger    *slog.Logger
+	warnAfter time.Duration
 }
 
-// NewManager creates a new lock Manager.
-func NewManager() *Manager {
-	return &Manager{locks: make(map[string]*sync.RWMutex)}
+type Option func(*Manager)
+
+func WithWarnAfter(d time.Duration) Option {
+	return func(m *Manager) { m.warnAfter = d }
 }
 
-func (m *Manager) get(path string) *sync.RWMutex {
+func NewManager(logger *slog.Logger, opts ...Option) *Manager {
+	m := &Manager{
+		locks:     make(map[string]*lockEntry),
+		logger:    logger,
+		warnAfter: DefaultWarnAfter,
+	}
+	for _, o := range opts {
+		o(m)
+	}
+	return m
+}
+
+func (m *Manager) getOrCreate(path string) *lockEntry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if l, ok := m.locks[path]; ok {
-		return l
+	e, ok := m.locks[path]
+	if !ok {
+		e = &lockEntry{}
+		m.locks[path] = e
 	}
-	l := &sync.RWMutex{}
-	m.locks[path] = l
-	return l
+	e.refs++
+	return e
 }
 
-// RLock acquires a read lock for the given path.
-func (m *Manager) RLock(path string) { m.get(path).RLock() }
+func (m *Manager) release(path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.locks[path]
+	if !ok {
+		return
+	}
+	e.refs--
+	if e.refs <= 0 {
+		delete(m.locks, path)
+	}
+}
 
-// RUnlock releases a read lock for the given path.
-func (m *Manager) RUnlock(path string) { m.get(path).RUnlock() }
+func (m *Manager) RLock(ctx context.Context, path string) error {
+	return m.acquireLock(ctx, path, false)
+}
 
-// Lock acquires a write lock for the given path.
-func (m *Manager) Lock(path string) { m.get(path).Lock() }
+func (m *Manager) RUnlock(path string) {
+	m.mu.Lock()
+	e, ok := m.locks[path]
+	m.mu.Unlock()
+	if ok {
+		e.rwmu.RUnlock()
+	}
+	m.release(path)
+	m.logger.Debug("lock released", "path", path, "mode", "read")
+}
 
-// Unlock releases a write lock for the given path.
-func (m *Manager) Unlock(path string) { m.get(path).Unlock() }
+func (m *Manager) Lock(ctx context.Context, path string) error {
+	return m.acquireLock(ctx, path, true)
+}
+
+func (m *Manager) Unlock(path string) {
+	m.mu.Lock()
+	e, ok := m.locks[path]
+	m.mu.Unlock()
+	if ok {
+		e.rwmu.Unlock()
+	}
+	m.release(path)
+	m.logger.Debug("lock released", "path", path, "mode", "write")
+}
+
+func (m *Manager) acquireLock(ctx context.Context, path string, exclusive bool) error {
+	e := m.getOrCreate(path)
+	start := time.Now()
+
+	acquired := make(chan struct{})
+	go func() {
+		if exclusive {
+			e.rwmu.Lock()
+		} else {
+			e.rwmu.RLock()
+		}
+		close(acquired)
+	}()
+
+	mode := "read"
+	if exclusive {
+		mode = "write"
+	}
+
+	select {
+	case <-acquired:
+		elapsed := time.Since(start)
+		if elapsed >= m.warnAfter {
+			m.logger.Warn("lock contention", "path", path, "mode", mode, "wait_ms", elapsed.Milliseconds())
+		} else {
+			m.logger.Debug("lock acquired", "path", path, "mode", mode, "wait_ms", elapsed.Milliseconds())
+		}
+		return nil
+	case <-ctx.Done():
+		go func() {
+			<-acquired
+			if exclusive {
+				e.rwmu.Unlock()
+			} else {
+				e.rwmu.RUnlock()
+			}
+			m.release(path)
+		}()
+		return ctx.Err()
+	}
+}

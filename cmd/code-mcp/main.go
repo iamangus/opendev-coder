@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -80,7 +81,7 @@ func runSingleServer(mode, addr, dir string) {
 		}
 	default:
 		// stdio is inherently single-stream; serve the read profile.
-		lm := locks.NewManager()
+		lm := locks.NewManager(slog.Default())
 		s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
 		registerReadTools(s, lm, dir)
 		if err := server.ServeStdio(s); err != nil {

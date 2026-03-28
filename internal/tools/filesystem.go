@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,12 +30,14 @@ var ignoreDirs = map[string]bool{
 }
 
 // ReadFile reads the entire content of a file within the worktree.
-func ReadFile(worktreeRoot, filePath string, lm *locks.Manager) (string, error) {
+func ReadFile(ctx context.Context, worktreeRoot, filePath string, lm *locks.Manager) (string, error) {
 	abs, err := worktree.Resolve(worktreeRoot, filePath)
 	if err != nil {
 		return "", err
 	}
-	lm.RLock(abs)
+	if err := lm.RLock(ctx, abs); err != nil {
+		return "", err
+	}
 	defer lm.RUnlock(abs)
 
 	info, err := os.Stat(abs)
@@ -52,12 +55,14 @@ func ReadFile(worktreeRoot, filePath string, lm *locks.Manager) (string, error) 
 }
 
 // ReadLines reads a range of lines (1-indexed, inclusive) from a file.
-func ReadLines(worktreeRoot, filePath string, startLine, endLine int, lm *locks.Manager) (string, error) {
+func ReadLines(ctx context.Context, worktreeRoot, filePath string, startLine, endLine int, lm *locks.Manager) (string, error) {
 	abs, err := worktree.Resolve(worktreeRoot, filePath)
 	if err != nil {
 		return "", err
 	}
-	lm.RLock(abs)
+	if err := lm.RLock(ctx, abs); err != nil {
+		return "", err
+	}
 	defer lm.RUnlock(abs)
 
 	f, err := os.Open(abs)
@@ -95,12 +100,14 @@ func ReadLines(worktreeRoot, filePath string, startLine, endLine int, lm *locks.
 }
 
 // CreateFile creates a new file at the given path with the provided content.
-func CreateFile(worktreeRoot, filePath, content string, lm *locks.Manager) (string, error) {
+func CreateFile(ctx context.Context, worktreeRoot, filePath, content string, lm *locks.Manager) (string, error) {
 	abs, err := worktree.Resolve(worktreeRoot, filePath)
 	if err != nil {
 		return "", err
 	}
-	lm.Lock(abs)
+	if err := lm.Lock(ctx, abs); err != nil {
+		return "", err
+	}
 	defer lm.Unlock(abs)
 
 	if _, err := os.Stat(abs); err == nil {
@@ -118,7 +125,7 @@ func CreateFile(worktreeRoot, filePath, content string, lm *locks.Manager) (stri
 }
 
 // ListDirectory lists the contents of a directory, optionally recursively.
-func ListDirectory(worktreeRoot, dirPath string, recursive bool, lm *locks.Manager) (string, error) {
+func ListDirectory(ctx context.Context, worktreeRoot, dirPath string, recursive bool, lm *locks.Manager) (string, error) {
 	abs, err := worktree.Resolve(worktreeRoot, dirPath)
 	if err != nil {
 		return "", err
@@ -176,7 +183,7 @@ func ListDirectory(worktreeRoot, dirPath string, recursive bool, lm *locks.Manag
 }
 
 // GrepSearch searches for a pattern (regex or literal) within files in a directory.
-func GrepSearch(worktreeRoot, query, directory string, lm *locks.Manager) (string, error) {
+func GrepSearch(ctx context.Context, worktreeRoot, query, directory string, lm *locks.Manager) (string, error) {
 	searchPath := worktreeRoot
 	if directory != "" {
 		searchPath = directory
@@ -207,7 +214,9 @@ func GrepSearch(worktreeRoot, query, directory string, lm *locks.Manager) (strin
 		// Read the file under a short-lived lock so we don't hold it for the
 		// entire walk duration.
 		data, readErr := func() ([]byte, error) {
-			lm.RLock(path)
+			if err := lm.RLock(ctx, path); err != nil {
+				return nil, err
+			}
 			defer lm.RUnlock(path)
 			return os.ReadFile(path)
 		}()
@@ -248,12 +257,14 @@ func GrepSearch(worktreeRoot, query, directory string, lm *locks.Manager) (strin
 
 // SearchAndReplace finds a block of text in a file and replaces it.
 // It first tries an exact match, then falls back to fuzzy matching.
-func SearchAndReplace(worktreeRoot, filePath, searchBlock, replaceBlock string, lm *locks.Manager) (string, error) {
+func SearchAndReplace(ctx context.Context, worktreeRoot, filePath, searchBlock, replaceBlock string, lm *locks.Manager) (string, error) {
 	abs, err := worktree.Resolve(worktreeRoot, filePath)
 	if err != nil {
 		return "", err
 	}
-	lm.Lock(abs)
+	if err := lm.Lock(ctx, abs); err != nil {
+		return "", err
+	}
 	defer lm.Unlock(abs)
 
 	data, err := os.ReadFile(abs)

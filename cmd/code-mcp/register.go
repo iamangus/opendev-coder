@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/iamangus/code-mcp/internal/locks"
@@ -40,7 +41,7 @@ func registerReadTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot stri
 				log.Printf("tool=read_file error=%q elapsed=%dms", err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			content, toolErr := tools.ReadFile(worktreeRoot, fp, lm)
+			content, toolErr := tools.ReadFile(ctx, worktreeRoot, fp, lm)
 			if toolErr != nil {
 				log.Printf("tool=read_file filepath=%q error=%q elapsed=%dms", fp, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
@@ -67,7 +68,7 @@ func registerReadTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot stri
 			}
 			startLine := req.GetInt("start_line", 1)
 			endLine := req.GetInt("end_line", 1)
-			content, toolErr := tools.ReadLines(worktreeRoot, fp, startLine, endLine, lm)
+			content, toolErr := tools.ReadLines(ctx, worktreeRoot, fp, startLine, endLine, lm)
 			if toolErr != nil {
 				log.Printf("tool=read_lines filepath=%q start=%d end=%d error=%q elapsed=%dms", fp, startLine, endLine, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
@@ -92,7 +93,7 @@ func registerReadTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot stri
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			recursive := req.GetBool("recursive", false)
-			listing, toolErr := tools.ListDirectory(worktreeRoot, dirPath, recursive, lm)
+			listing, toolErr := tools.ListDirectory(ctx, worktreeRoot, dirPath, recursive, lm)
 			if toolErr != nil {
 				log.Printf("tool=list_directory dirpath=%q recursive=%t error=%q elapsed=%dms", dirPath, recursive, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
@@ -117,7 +118,7 @@ func registerReadTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot stri
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			directory := req.GetString("directory", "")
-			results, toolErr := tools.GrepSearch(worktreeRoot, query, directory, lm)
+			results, toolErr := tools.GrepSearch(ctx, worktreeRoot, query, directory, lm)
 			if toolErr != nil {
 				log.Printf("tool=grep_search query=%q directory=%q error=%q elapsed=%dms", query, directory, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
@@ -167,7 +168,7 @@ func registerWriteTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot str
 				log.Printf("tool=create_file filepath=%q error=%q elapsed=%dms", fp, err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			msg, toolErr := tools.CreateFile(worktreeRoot, fp, content, lm)
+			msg, toolErr := tools.CreateFile(ctx, worktreeRoot, fp, content, lm)
 			if toolErr != nil {
 				log.Printf("tool=create_file filepath=%q error=%q elapsed=%dms", fp, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
@@ -202,7 +203,7 @@ func registerWriteTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot str
 				log.Printf("tool=search_and_replace filepath=%q error=%q elapsed=%dms", fp, err, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			result, toolErr := tools.SearchAndReplace(worktreeRoot, fp, searchBlock, replaceBlock, lm)
+			result, toolErr := tools.SearchAndReplace(ctx, worktreeRoot, fp, searchBlock, replaceBlock, lm)
 			if toolErr != nil {
 				log.Printf("tool=search_and_replace filepath=%q error=%q elapsed=%dms", fp, toolErr, time.Since(start).Milliseconds())
 				return mcp.NewToolResultError(toolErr.Error()), nil
@@ -276,7 +277,7 @@ func registerWriteTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot str
 // newMCPHandler creates an http.Handler for the given profile, backed by a new
 // MCP server instance constrained to worktreeRoot.
 func newMCPHandler(profile Profile, worktreeRoot string, ts *tools.TestStore) *server.StreamableHTTPServer {
-	lm := locks.NewManager()
+	lm := locks.NewManager(slog.Default())
 	s := server.NewMCPServer("code-mcp", "1.0.0", server.WithToolCapabilities(true))
 	switch profile {
 	case ProfileRead:

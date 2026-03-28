@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +12,9 @@ import (
 	"github.com/iamangus/code-mcp/internal/worktree"
 )
 
-func newLM() *locks.Manager { return locks.NewManager() }
+func newLM() *locks.Manager { return locks.NewManager(slog.Default()) }
+
+var bgCtx = context.Background()
 
 // TestReadFile_Success verifies that ReadFile returns the correct content.
 func TestReadFile_Success(t *testing.T) {
@@ -19,7 +23,7 @@ func TestReadFile_Success(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadFile(dir, "test.txt", newLM())
+	got, err := ReadFile(bgCtx, dir, "test.txt", newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -31,7 +35,7 @@ func TestReadFile_Success(t *testing.T) {
 // TestReadFile_NotFound verifies that ReadFile returns a ToolError for missing files.
 func TestReadFile_NotFound(t *testing.T) {
 	dir := t.TempDir()
-	_, err := ReadFile(dir, "missing.txt", newLM())
+	_, err := ReadFile(bgCtx, dir, "missing.txt", newLM())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -47,7 +51,7 @@ func TestReadFile_ExceedsSize(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "big.bin"), large, 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ReadFile(dir, "big.bin", newLM())
+	_, err := ReadFile(bgCtx, dir, "big.bin", newLM())
 	if err == nil {
 		t.Fatal("expected size error, got nil")
 	}
@@ -67,7 +71,7 @@ func TestReadLines_Success(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "lines.txt"), []byte(lines), 0644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadLines(dir, "lines.txt", 2, 4, newLM())
+	got, err := ReadLines(bgCtx, dir, "lines.txt", 2, 4, newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +87,7 @@ func TestReadLines_StartLineTooLarge(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "short.txt"), []byte("one\ntwo"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ReadLines(dir, "short.txt", 100, 200, newLM())
+	_, err := ReadLines(bgCtx, dir, "short.txt", 100, 200, newLM())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -95,7 +99,7 @@ func TestReadLines_StartLineTooLarge(t *testing.T) {
 // TestCreateFile_Success verifies successful file creation.
 func TestCreateFile_Success(t *testing.T) {
 	dir := t.TempDir()
-	msg, err := CreateFile(dir, "new.txt", "content", newLM())
+	msg, err := CreateFile(bgCtx, dir, "new.txt", "content", newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +118,7 @@ func TestCreateFile_AlreadyExists(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "exists.txt"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := CreateFile(dir, "exists.txt", "y", newLM())
+	_, err := CreateFile(bgCtx, dir, "exists.txt", "y", newLM())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -134,7 +138,7 @@ func TestListDirectory_Flat(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "b.txt"), []byte{}, 0644)
 	os.MkdirAll(filepath.Join(dir, "subdir"), 0755)
 
-	out, err := ListDirectory(dir, ".", false, newLM())
+	out, err := ListDirectory(bgCtx, dir, ".", false, newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,7 +156,7 @@ func TestListDirectory_Recursive(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "sub"), 0755)
 	os.WriteFile(filepath.Join(dir, "sub", "deep.txt"), []byte{}, 0644)
 
-	out, err := ListDirectory(dir, ".", true, newLM())
+	out, err := ListDirectory(bgCtx, dir, ".", true, newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -169,7 +173,7 @@ func TestListDirectory_IgnoresNodeModules(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "app.js"), []byte{}, 0644)
 
 	// Flat listing should skip node_modules
-	out, err := ListDirectory(dir, ".", false, newLM())
+	out, err := ListDirectory(bgCtx, dir, ".", false, newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -178,7 +182,7 @@ func TestListDirectory_IgnoresNodeModules(t *testing.T) {
 	}
 
 	// Recursive listing should skip node_modules
-	out, err = ListDirectory(dir, ".", true, newLM())
+	out, err = ListDirectory(bgCtx, dir, ".", true, newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -193,7 +197,7 @@ func TestListDirectory_IgnoresGit(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, ".git"), 0755)
 	os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("ref"), 0644)
 
-	out, err := ListDirectory(dir, ".", false, newLM())
+	out, err := ListDirectory(bgCtx, dir, ".", false, newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -208,7 +212,7 @@ func TestGrepSearch_FindsMatches(t *testing.T) {
 	content := "foo bar\nbaz\nfoo qux\n"
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte(content), 0644)
 
-	out, err := GrepSearch(dir, "foo", "", newLM())
+	out, err := GrepSearch(bgCtx, dir, "foo", "", newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -236,7 +240,7 @@ func TestGrepSearch_RegexSearch(t *testing.T) {
 	sb.WriteString("error: another failure\n")
 	os.WriteFile(filepath.Join(dir, "log.txt"), []byte(sb.String()), 0644)
 
-	out, err := GrepSearch(dir, `^error:`, "", newLM())
+	out, err := GrepSearch(bgCtx, dir, `^error:`, "", newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -258,7 +262,7 @@ func TestSearchAndReplace_UniqueMatch(t *testing.T) {
 	original := "hello world\nfoo bar\ngoodbye"
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte(original), 0644)
 
-	out, err := SearchAndReplace(dir, "file.txt", "foo bar", "replaced", newLM())
+	out, err := SearchAndReplace(bgCtx, dir, "file.txt", "foo bar", "replaced", newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -280,7 +284,7 @@ func TestSearchAndReplace_MultipleMatches(t *testing.T) {
 	original := "foo\nfoo\nbar"
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte(original), 0644)
 
-	_, err := SearchAndReplace(dir, "file.txt", "foo", "baz", newLM())
+	_, err := SearchAndReplace(bgCtx, dir, "file.txt", "foo", "baz", newLM())
 	if err == nil {
 		t.Fatal("expected error for multiple matches, got nil")
 	}
@@ -304,7 +308,7 @@ func TestSearchAndReplace_FuzzyMatch(t *testing.T) {
 	searchBlock := "func hello() {\n    return nil\n}"
 	replaceBlock := "func hello() {\n    return \"world\"\n}"
 
-	out, err := SearchAndReplace(dir, "file.go", searchBlock, replaceBlock, newLM())
+	out, err := SearchAndReplace(bgCtx, dir, "file.go", searchBlock, replaceBlock, newLM())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -319,7 +323,7 @@ func TestSearchAndReplace_NoMatchBelowThreshold(t *testing.T) {
 	original := "completely different content here"
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte(original), 0644)
 
-	_, err := SearchAndReplace(dir, "file.txt", "totally unrelated search block that won't match", "replacement", newLM())
+	_, err := SearchAndReplace(bgCtx, dir, "file.txt", "totally unrelated search block that won't match", "replacement", newLM())
 	if err == nil {
 		t.Fatal("expected error for no match, got nil")
 	}
