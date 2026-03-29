@@ -13,6 +13,7 @@ type GitOps interface {
 	CommitLog(ctx context.Context, dir string, args ...string) (string, error)
 	DefaultBranch(ctx context.Context, dir string) (string, error)
 	BranchExists(ctx context.Context, dir, branch string) (bool, error)
+	RemoteBranchExists(ctx context.Context, dir, branch string) (bool, error)
 	CreateBranch(ctx context.Context, dir, branch, startPoint string) error
 	Status(ctx context.Context, dir string) (string, error)
 }

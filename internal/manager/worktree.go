@@ -61,19 +61,29 @@ func (m *Manager) CreateWorktree(repo, branch, base string) (string, error) {
 		m.logger.Warn("worktree: fetch before create (non-fatal)", "repo", repo, "error", fetchErr)
 	}
 
-	exists, err := m.git.BranchExists(ctx, repoDir, branch)
+	localExists, err := m.git.BranchExists(ctx, repoDir, branch)
 	if err != nil {
 		return "", err
 	}
-	if !exists {
-		defaultBranch, err := m.git.DefaultBranch(ctx, repoDir)
-		if err != nil {
-			return "", fmt.Errorf("cannot determine default branch: %w", err)
+
+	remoteExists := false
+	if !localExists {
+		remoteExists, _ = m.git.RemoteBranchExists(ctx, repoDir, branch)
+
+		var startPoint string
+		if remoteExists {
+			startPoint = "origin/" + branch
+		} else {
+			defaultBranch, err := m.git.DefaultBranch(ctx, repoDir)
+			if err != nil {
+				return "", fmt.Errorf("cannot determine default branch: %w", err)
+			}
+			startPoint = defaultBranch
+			if base != "" {
+				startPoint = base
+			}
 		}
-		startPoint := defaultBranch
-		if base != "" {
-			startPoint = base
-		}
+
 		if err := m.git.CreateBranch(ctx, repoDir, branch, startPoint); err != nil {
 			return "", fmt.Errorf("create branch %q: %w", branch, err)
 		}
@@ -83,8 +93,10 @@ func (m *Manager) CreateWorktree(repo, branch, base string) (string, error) {
 		return "", fmt.Errorf("worktree add: %w", err)
 	}
 
-	if pushErr := m.git.Push(ctx, wtDir, branch); pushErr != nil {
-		m.logger.Warn("worktree: push after create (non-fatal)", "repo", repo, "branch", branch, "error", pushErr)
+	if !localExists && !remoteExists {
+		if pushErr := m.git.Push(ctx, wtDir, branch); pushErr != nil {
+			m.logger.Warn("worktree: push after create (non-fatal)", "repo", repo, "branch", branch, "error", pushErr)
+		}
 	}
 
 	resolved, err := filepath.EvalSymlinks(wtDir)

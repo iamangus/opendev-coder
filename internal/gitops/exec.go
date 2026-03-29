@@ -77,6 +77,14 @@ func (e *Exec) BranchExists(ctx context.Context, dir, branch string) (bool, erro
 	return true, nil
 }
 
+func (e *Exec) RemoteBranchExists(ctx context.Context, dir, branch string) (bool, error) {
+	_, err := e.run(ctx, dir, "git", "rev-parse", "--verify", "origin/"+branch)
+	if err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
 func (e *Exec) CreateBranch(ctx context.Context, dir, branch, startPoint string) error {
 	_, err := e.run(ctx, dir, "git", "branch", branch, startPoint)
 	return err

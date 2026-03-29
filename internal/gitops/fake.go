@@ -102,6 +102,11 @@ func (f *Fake) BranchExists(_ context.Context, dir, branch string) (bool, error)
 	return f.BoolReturns["BranchExists"], f.err("BranchExists")
 }
 
+func (f *Fake) RemoteBranchExists(_ context.Context, dir, branch string) (bool, error) {
+	f.record("RemoteBranchExists", dir, branch)
+	return f.BoolReturns["RemoteBranchExists"], f.err("RemoteBranchExists")
+}
+
 func (f *Fake) CreateBranch(_ context.Context, dir, branch, startPoint string) error {
 	f.record("CreateBranch", dir, branch, startPoint)
 	return f.err("CreateBranch")
