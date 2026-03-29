@@ -86,7 +86,13 @@ DELETE /api/repos/{repo}
 GET    /api/repos/{repo}/branches
 POST   /api/repos/{repo}/branches
 DELETE /api/repos/{repo}/branches/{branch}
+POST   /api/repos/{repo}/branches/{branch}/push
+POST   /api/repos/{repo}/branches/{branch}/merge
+GET    /api/repos/{repo}/branches/{branch}/commits
 POST   /api/repos/{repo}/branches/{branch}/test/run
+POST   /api/repos/{repo}/pulls
+PATCH  /api/repos/{repo}/pulls/{number}
+POST   /api/repos/{repo}/pulls/{number}/ready
 ```
 
 ## Docker

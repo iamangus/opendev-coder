@@ -23,6 +23,7 @@ import (
 //	GET    /api/repos/{repo}/branches                        – list branches for a repo
 //	POST   /api/repos/{repo}/branches                        – create a worktree for a branch
 //	DELETE /api/repos/{repo}/branches/{branch}               – remove a worktree / notify of merge
+//	POST   /api/repos/{repo}/branches/{branch}/push          – push branch to origin
 //	POST   /api/repos/{repo}/branches/{branch}/merge         – merge branch into another branch
 //	GET    /api/repos/{repo}/branches/{branch}/commits       – list commits unique to branch
 //	POST   /api/repos/{repo}/pulls                           – create a draft PR (GitHub)
@@ -155,6 +156,24 @@ func registerAPIRoutes(mux *http.ServeMux, mgr *manager.Manager, ghClient github
 		onRemoved(repo, branch)
 		if err := mgr.RemoveWorktree(repo, branch); err != nil {
 			apiError(w, err.Error(), http.StatusNotFound, logger)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true}, logger)
+	})
+
+	// POST /api/repos/{repo}/branches/{branch}/push
+	// Pushes the branch worktree's commits to origin.
+	// Body is optional (ignored).
+	mux.HandleFunc("POST /api/repos/{repo}/branches/{branch}/push", func(w http.ResponseWriter, r *http.Request) {
+		repo := r.PathValue("repo")
+		branch := r.PathValue("branch")
+
+		// Drain body (optional, ignore decode errors).
+		var body struct{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+
+		if err := mgr.PushBranch(repo, branch); err != nil {
+			apiError(w, err.Error(), http.StatusBadRequest, logger)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true}, logger)
