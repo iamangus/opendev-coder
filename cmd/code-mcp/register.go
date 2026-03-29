@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -146,7 +145,7 @@ func registerReadTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot stri
 }
 
 // registerWriteTools registers the write/mutate tool set on s.
-// Included: create_file, search_and_replace, execute_terminal_command.
+// Included: create_file, search_and_replace.
 func registerWriteTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot string, logger *slog.Logger) {
 	// create_file
 	s.AddTool(
@@ -212,40 +211,6 @@ func registerWriteTools(s *server.MCPServer, lm *locks.Manager, worktreeRoot str
 		},
 	)
 
-	// execute_terminal_command
-	s.AddTool(
-		mcp.NewTool("execute_terminal_command",
-			mcp.WithDescription("Execute a shell command in the worktree directory."),
-			mcp.WithString("command", mcp.Required(), mcp.Description("Shell command to execute.")),
-			mcp.WithNumber("timeout_seconds", mcp.Description("Maximum execution time in seconds. Default: 120.")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			start := time.Now()
-			command, err := req.RequireString("command")
-			if err != nil {
-				logger.Error("tool call failed", "tool", "execute_terminal_command", "error", err, "duration_ms", time.Since(start).Milliseconds())
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			timeoutSecs := req.GetInt("timeout_seconds", 120)
-			timeout := time.Duration(timeoutSecs) * time.Second
-
-			stdout, stderr, exitCode, timedOut, toolErr := tools.ExecuteTerminalCommand(worktreeRoot, command, timeout)
-			if toolErr != nil {
-				logger.Error("tool call failed", "tool", "execute_terminal_command", "command", command, "error", toolErr, "duration_ms", time.Since(start).Milliseconds())
-				return mcp.NewToolResultError(toolErr.Error()), nil
-			}
-
-			var result string
-			if timedOut {
-				logger.Warn("tool call timed out", "tool", "execute_terminal_command", "command", command, "duration_ms", time.Since(start).Milliseconds())
-				result = fmt.Sprintf("Command timed out after %d seconds.\nstdout: %s\nstderr: %s", timeoutSecs, stdout, stderr)
-			} else {
-				logger.Info("tool call completed", "tool", "execute_terminal_command", "command", command, "exit_code", exitCode, "duration_ms", time.Since(start).Milliseconds())
-				result = fmt.Sprintf("Exit code: %d\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
-			}
-			return mcp.NewToolResultText(result), nil
-		},
-	)
 }
 
 func newMCPHandler(profile Profile, worktreeRoot string, logger *slog.Logger) *server.StreamableHTTPServer {

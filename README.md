@@ -9,7 +9,7 @@ Tools are grouped into named **profiles**. Each profile is served at a separate 
 | Profile | Endpoint suffix | Tools |
 |---------|-----------------|-------|
 | `read`  | `/read/mcp`     | `read_file`, `read_lines`, `list_directory`, `grep_search`, `get_git_diff` |
-| `write` | `/write/mcp`    | `create_file`, `search_and_replace`, `execute_terminal_command` |
+| `write` | `/write/mcp`    | `create_file`, `search_and_replace` |
 
 ## Tools
 
@@ -29,7 +29,6 @@ Tools are grouped into named **profiles**. Each profile is served at a separate 
 |------|------------|-------------|
 | `create_file` | `filepath`, `content` | Create a new file (fails if it already exists) |
 | `search_and_replace` | `filepath`, `search_block`, `replace_block` | Replace a block of text (exact then fuzzy) |
-| `execute_terminal_command` | `command`, `timeout_seconds?` | Run a shell command in the worktree |
 
 All `filepath` and `dirpath` values are relative to the worktree root. Path traversal outside the root is rejected.
 
